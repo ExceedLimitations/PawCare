@@ -136,7 +136,7 @@ app.get("/status", async (_req, res) => {
   res.json(
     logs.length
       ? logs[logs.length - 1]
-      : { food_level: 72, water_level: 65, temperature: 22.1, jammed: false },
+      : { food_level: 72, jammed: false, last_dispensed_g: null, dispense_success: null },
   );
 });
 
@@ -150,9 +150,8 @@ app.get("/sensor/history", async (_req, res) => {
     .filter((s) => new Date(s.timestamp) >= cutoff)
     .forEach((s) => {
       const day = s.timestamp.slice(0, 10);
-      if (!byDay[day]) byDay[day] = { day, food_sum: 0, temp_sum: 0, count: 0 };
+      if (!byDay[day]) byDay[day] = { day, food_sum: 0, count: 0 };
       byDay[day].food_sum += s.food_level;
-      byDay[day].temp_sum += s.temperature;
       byDay[day].count++;
     });
   const rows = Object.values(byDay)
@@ -160,7 +159,6 @@ app.get("/sensor/history", async (_req, res) => {
     .map((r) => ({
       day: r.day,
       avg_food: Math.round(r.food_sum / r.count),
-      avg_temp: +(r.temp_sum / r.count).toFixed(1),
     }));
   res.json(rows);
 });
@@ -275,9 +273,9 @@ mqttClient.on("message", async (topic, payload) => {
       id: 0,
       timestamp: new Date().toISOString(),
       food_level: data.food_level ?? 0,
-      water_level: data.water_level ?? 0,
-      temperature: data.temperature ?? 0,
       jammed: !!data.jammed,
+      last_dispensed_g: data.last_dispensed_g ?? null,
+      dispense_success: data.dispense_success ?? null,
     };
     await db.read();
     entry.id = nextId(db.data.sensor_logs);

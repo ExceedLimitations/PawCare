@@ -1,467 +1,463 @@
 <!doctype html>
 <html lang="en" data-theme="light">
-  <head>
-    <meta charset="UTF-8" />
-    <title>PawFeed — Smart Pet Feeder</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <link rel="stylesheet" href="style.css" />
-  </head>
+<head>
+  <meta charset="UTF-8" />
+  <title>PawFeed — Smart Pet Feeder Dashboard</title>
+  <meta name="description" content="Real-time monitoring and automated feeding control for smart pet feeders." />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
 
-  <body>
-    <!-- ── Navbar ──────────────────────────────────────────────── -->
-    <nav class="navbar">
-      <a class="nav-brand" href="#">🐾 <span>PawFeed</span></a>
-      <div class="nav-right">
-        <span class="pill pill-online">
-          <span class="pill-dot"></span> Online
-        </span>
-        <button
-          class="notif-btn"
-          title="Notifications"
-          onclick="toggleNotif(this)"
-        >
-          🔔 <span class="notif-badge" id="notif-badge"></span>
-        </button>
-        <button
-          class="theme-toggle"
-          onclick="toggleTheme()"
-          title="Toggle theme"
-          id="theme-btn"
-        >
-          🌙
-        </button>
+<div class="shell">
+
+  <!-- ── Sidebar ────────────────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+    <a class="sidebar-brand" href="#">
+      <div class="brand-mark">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5.172C10 3.782 8.423 2.679 6.5 3c-2.823.47-4.113 6.006-4 7 .137 1.217 1.5 3 3.5 3 1.5 0 2.5-.5 3-1.5"/><path d="M14.267 5.172c0-1.39 1.577-2.493 3.5-2.172 2.823.47 4.113 6.006 4 7-.137 1.217-1.5 3-3.5 3-1.5 0-2.5-.5-3-1.5"/><path d="M8 14v.5"/><path d="M16 14v.5"/><path d="M11.25 16.25h1.5L12 17l-.75-.75Z"/><path d="M4.42 11.247A13.152 13.152 0 0 0 4 14.556C4 18.728 7.582 21 12 21s8-2.272 8-6.444c0-1.061-.162-2.2-.42-3.309a1 1 0 0 0-.94-.695H5.36a1 1 0 0 0-.94.695Z"/></svg>
       </div>
+      <span class="brand-label">PawFeed</span>
+    </a>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-section-label">Menu</div>
+    <nav class="sidebar-nav">
+      <a class="nav-item active" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Dashboard
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Schedule
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+        Analytics
+      </a>
+      <a class="nav-item" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        Settings
+      </a>
     </nav>
 
-    <!-- ── Hero ────────────────────────────────────────────────── -->
-    <div class="hero">
-      <h1>🐾 PawFeed Smart Dashboard</h1>
-      <p>Real-time monitoring & automated feeding for your beloved pet</p>
-      <div class="hero-meta">
-        <div class="hero-stat">
-          <div class="val" id="hero-feedings">0</div>
-          <div class="lbl">Feedings Today</div>
-        </div>
-        <div class="hero-stat">
-          <div class="val" id="hero-level">—%</div>
-          <div class="lbl">Food Level</div>
-        </div>
-        <div class="hero-stat">
-          <div class="val" id="hero-uptime">12h</div>
-          <div class="lbl">Uptime</div>
-        </div>
-        <div class="hero-stat">
-          <div class="val" id="hero-temp">22°</div>
-          <div class="lbl">Room Temp</div>
-        </div>
+    <div class="sidebar-footer">
+      <div class="sidebar-status" id="status-pill">
+        <span class="sidebar-status-dot" id="status-dot"></span>
+        <span id="status-text">Device Online</span>
       </div>
     </div>
+  </aside>
 
-    <!-- ── Main ────────────────────────────────────────────────── -->
-    <main class="main">
-      <!-- STAT STRIP -->
-      <p class="section-title">Overview</p>
-      <div class="grid-4">
-        <div class="stat-card" style="animation-delay: 0.05s">
-          <div class="sc-label">Feedings Today</div>
-          <div class="sc-value sc-purple" id="stat-today">3</div>
-          <div class="sc-sub">
-            <span class="sc-trend trend-up">▲ +1</span> vs yesterday
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+  <!-- ── Main panel ─────────────────────────────────────────── -->
+  <div class="main-panel">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="mobile-toggle" id="mobile-toggle" onclick="openSidebar()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span class="topbar-title">Dashboard</span>
+      </div>
+      <div class="topbar-right">
+        <button class="topbar-btn" id="notif-btn" title="Notifications" onclick="toggleNotif()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span class="topbar-badge" id="notif-badge"></span>
+        </button>
+        <button class="topbar-btn" id="theme-btn" title="Toggle theme" onclick="toggleTheme()">
+          <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+          <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="content">
+
+      <!-- Summary strip -->
+      <div class="summary-strip">
+        <div class="summary-card">
+          <div class="summary-header">
+            <div class="summary-icon si-brand">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 12H3"/><path d="M16 6H3"/><path d="M16 18H3"/><path d="m19 10-4 4"/><path d="m15 10 4 4"/></svg>
+            </div>
+            <span class="summary-trend trend-up">+1</span>
           </div>
+          <div class="summary-value" id="stat-today">3</div>
+          <div class="summary-label">Feedings Today</div>
         </div>
-        <div class="stat-card" style="animation-delay: 0.1s">
-          <div class="sc-label">Weekly Total</div>
-          <div class="sc-value sc-green" id="stat-week">21</div>
-          <div class="sc-sub">
-            <span class="sc-trend trend-up">▲ on track</span>
+        <div class="summary-card">
+          <div class="summary-header">
+            <div class="summary-icon si-green">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </div>
+            <span class="summary-trend trend-flat">On track</span>
           </div>
+          <div class="summary-value" id="stat-week">21</div>
+          <div class="summary-label">Weekly Total</div>
         </div>
-        <div class="stat-card" style="animation-delay: 0.15s">
-          <div class="sc-label">Avg Food Level</div>
-          <div class="sc-value sc-amber" id="stat-avg">72%</div>
-          <div class="sc-sub">
-            <span class="sc-trend trend-down">▼ needs refill soon</span>
+        <div class="summary-card">
+          <div class="summary-header">
+            <div class="summary-icon si-amber">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+            <span class="summary-trend trend-down">Low</span>
           </div>
+          <div class="summary-value" id="stat-avg">72%</div>
+          <div class="summary-label">Avg Food Level</div>
         </div>
-        <div class="stat-card" style="animation-delay: 0.2s">
-          <div class="sc-label">Last Fed</div>
-          <div class="sc-value stat-last-val" id="stat-last">12:30 PM</div>
-          <div class="sc-sub">Automated schedule</div>
+        <div class="summary-card">
+          <div class="summary-header">
+            <div class="summary-icon si-blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <span class="summary-trend trend-flat">Auto</span>
+          </div>
+          <div class="summary-value" id="stat-last" style="font-size:1.4rem">12:30 PM</div>
+          <div class="summary-label">Last Fed</div>
         </div>
       </div>
 
-      <!-- PET PROFILE + ALERT -->
-      <p class="section-title">Pet & Status</p>
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-pink">🐶</div>
-              Pet Profile
+      <!-- Pet & Status -->
+      <div class="section-row">
+        <div class="section-heading">Pet &amp; Status</div>
+        <div class="grid-2">
+          <!-- Pet profile -->
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-brand">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>
+                </div>
+                <span class="card-head-title">Pet Profile</span>
+              </div>
+              <button class="btn btn-outline btn-sm" id="edit-pet-btn">Edit</button>
             </div>
-            <button class="btn btn-ghost btn-sm">Edit</button>
-          </div>
-          <div class="pet-profile">
-            <div class="pet-avatar">🐕</div>
-            <div class="pet-info">
-              <div class="pet-name">Buddy</div>
-              <div class="pet-meta">Golden Retriever • 3 yrs • 28 kg</div>
-              <div class="pet-tags">
-                <span class="pet-tag tag-purple">Daily: 3× meals</span>
-                <span class="pet-tag tag-green">Healthy Weight</span>
-                <span class="pet-tag tag-amber">Medium Kibble</span>
+            <div class="card-body">
+              <div class="pet-row">
+                <div class="pet-avatar-ring">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5.172C10 3.782 8.423 2.679 6.5 3c-2.823.47-4.113 6.006-4 7 .137 1.217 1.5 3 3.5 3 1.5 0 2.5-.5 3-1.5"/><path d="M14.267 5.172c0-1.39 1.577-2.493 3.5-2.172 2.823.47 4.113 6.006 4 7-.137 1.217-1.5 3-3.5 3-1.5 0-2.5-.5-3-1.5"/><path d="M8 14v.5"/><path d="M16 14v.5"/><path d="M11.25 16.25h1.5L12 17l-.75-.75Z"/><path d="M4.42 11.247A13.152 13.152 0 0 0 4 14.556C4 18.728 7.582 21 12 21s8-2.272 8-6.444c0-1.061-.162-2.2-.42-3.309a1 1 0 0 0-.94-.695H5.36a1 1 0 0 0-.94.695Z"/></svg>
+                </div>
+                <div class="pet-detail">
+                  <div class="pet-name">Buddy</div>
+                  <div class="pet-meta">Golden Retriever &middot; 3 yrs &middot; 28 kg</div>
+                  <div class="pet-tags">
+                    <span class="pet-tag tag-brand">3x daily</span>
+                    <span class="pet-tag tag-green">Healthy</span>
+                    <span class="pet-tag tag-amber">Medium kibble</span>
+                  </div>
+                </div>
+              </div>
+              <div class="card-divider"></div>
+              <div class="serving-row">
+                <div class="serving-box">
+                  <div class="serving-val v-brand">80g</div>
+                  <div class="serving-lbl">Per Serving</div>
+                </div>
+                <div class="serving-box">
+                  <div class="serving-val v-green">240g</div>
+                  <div class="serving-lbl">Daily Target</div>
+                </div>
               </div>
             </div>
           </div>
-          <div class="divider"></div>
-          <div class="serving-boxes">
-            <div class="serving-box">
-              <div class="serving-val-accent">80g</div>
-              <div class="serving-label">Per Serving</div>
-            </div>
-            <div class="serving-box">
-              <div class="serving-val-green">240g</div>
-              <div class="serving-label">Daily Total</div>
-            </div>
-          </div>
-        </div>
 
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-red">🚨</div>
-              System Alerts
-            </div>
-            <span id="alert-count-badge" class="pill alert-badge alert-badge-ok"
-              >All Clear</span
-            >
-          </div>
-          <div id="jam-alert-box" class="alert-box alert-ok">
-            <span class="alert-icon">✅</span>
-            <span id="jam-alert"
-              >System operating normally — no issues detected.</span
-            >
-          </div>
-          <div class="divider"></div>
-          <div class="sys-alerts">
-            <div class="alert-box sys-alert-wifi">
-              <span class="alert-icon">🌐</span> Wi-Fi connected — Signal:
-              <strong>Strong</strong>
-            </div>
-            <div class="alert-box sys-alert-power">
-              <span class="alert-icon">🔋</span> Power:
-              <strong>Mains — Battery backup ready</strong>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- FOOD LEVEL + WATER -->
-      <p class="section-title">Resources</p>
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-amber">🥣</div>
-              Food Storage
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="simulateRefill()">
-              + Refill
-            </button>
-          </div>
-          <div class="gauge-wrap">
-            <svg class="gauge-svg" viewBox="0 0 180 180">
-              <circle class="gauge-track" cx="90" cy="90" r="80" />
-              <circle
-                class="gauge-fill"
-                id="gauge-circle"
-                cx="90"
-                cy="90"
-                r="80"
-                stroke="#6c63ff"
-              />
-              <text
-                class="gauge-label"
-                id="gauge-text"
-                x="90"
-                y="85"
-                fill="var(--text)"
-              >
-                72%
-              </text>
-              <text
-                class="gauge-sublabel"
-                x="90"
-                y="108"
-                fill="var(--text-muted)"
-              >
-                Food Level
-              </text>
-            </svg>
-            <span class="gauge-status alert-badge-ok" id="gauge-status-badge"
-              >✅ Good</span
-            >
-          </div>
-          <div class="prog-bar-outer" style="margin-top: 8px">
-            <div class="prog-bar-inner" id="food-prog"></div>
-          </div>
-          <div class="prog-bar-labels">
-            <span>0%</span><span id="food-level" class="prog-bar-val">72%</span
-            ><span>100%</span>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon" style="background: rgba(59, 130, 246, 0.12)">
-                💧
+          <!-- System alerts -->
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon" style="background:var(--red-subtle);color:var(--red)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
+                <span class="card-head-title">System Alerts</span>
               </div>
-              Water Reservoir
+              <span class="badge badge-ok" id="alert-count-badge">All Clear</span>
             </div>
-            <button class="btn btn-ghost btn-sm" onclick="simulateWater()">
-              + Refill
-            </button>
-          </div>
-          <div class="water-wave water-wave-sm">
-            <div class="wave-fill" id="water-fill"></div>
-            <div class="wave-label" id="water-label">65%</div>
-          </div>
-          <div class="reservoir-stats">
-            <div class="res-stat">
-              <div class="res-val-blue">1.2L</div>
-              <div class="res-label">Remaining</div>
-            </div>
-            <div class="res-stat">
-              <div class="res-val-blue">2.0L</div>
-              <div class="res-label">Capacity</div>
-            </div>
-            <div class="res-stat">
-              <div class="res-val-amber">18h</div>
-              <div class="res-label">Est. Left</div>
-            </div>
-          </div>
-          <div class="divider"></div>
-          <div class="temp-display temp-box">
-            <div class="temp-val" id="room-temp">
-              22<span class="temp-unit">°C</span>
-            </div>
-            <div class="temp-label">Room Temperature</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CHARTS -->
-      <p class="section-title">Analytics</p>
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-purple">📊</div>
-              Feeding History (7 Days)
-            </div>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="feedingChart"></canvas>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-green">📈</div>
-              Food Level Trend
-            </div>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="levelChart"></canvas>
-          </div>
-        </div>
-      </div>
-
-      <!-- DOUGHNUT + ACTIVITY LOG -->
-      <div class="grid-2 meal-dist-wrapper">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-pink">🥧</div>
-              Meal Distribution
-            </div>
-          </div>
-          <div class="meal-dist">
-            <div class="meal-dist-chart">
-              <canvas id="mealChart"></canvas>
-            </div>
-            <div class="meal-dist-legend">
-              <div class="meal-legend-item">
-                <span class="meal-dot meal-dot-morning"></span>
-                Morning (7:00 AM) — <strong>80g</strong>
+            <div class="card-body">
+              <div id="jam-alert-box" class="alert-box alert-ok">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <span id="jam-alert">System operating normally — no issues detected.</span>
               </div>
-              <div class="meal-legend-item">
-                <span class="meal-dot meal-dot-afternoon"></span>
-                Afternoon (12:30 PM) — <strong>80g</strong>
+              <div class="card-divider"></div>
+              <div class="sys-stack">
+                <div class="sys-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+                  Wi-Fi &mdash; Signal: <strong>Strong</strong>
+                </div>
+                <div class="sys-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="6" width="18" height="12" rx="2" ry="2"/><line x1="23" y1="13" x2="23" y2="11"/></svg>
+                  Power: <strong>Mains &mdash; Backup ready</strong>
+                </div>
               </div>
-              <div class="meal-legend-item">
-                <span class="meal-dot meal-dot-evening"></span>
-                Evening (6:00 PM) — <strong>80g</strong>
-              </div>
-              <div class="meal-legend-item">
-                <span class="meal-dot meal-dot-manual"></span>
-                Manual Dispense — <strong>variable</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-purple">📋</div>
-              Activity Log
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="clearLog()">
-              Clear
-            </button>
-          </div>
-          <div class="log-list" id="log-list">
-            <div class="log-item log-ok">
-              <span class="log-time">12:30 PM</span>
-              <span class="log-msg">🥣 Scheduled feeding — 80g dispensed</span>
-            </div>
-            <div class="log-item log-ok">
-              <span class="log-time">07:00 AM</span>
-              <span class="log-msg">🥣 Morning meal — 80g dispensed</span>
-            </div>
-            <div class="log-item log-warn">
-              <span class="log-time">06:45 AM</span>
-              <span class="log-msg"
-                >⚠️ Food level dropped below 30% — refill recommended</span
-              >
-            </div>
-            <div class="log-item log-ok">
-              <span class="log-time">Yesterday</span>
-              <span class="log-msg">🔋 Battery backup test — passed</span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- MANUAL CONTROL + SCHEDULE -->
-      <p class="section-title">Controls & Schedule</p>
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-green">🕹️</div>
-              Manual Control
+      <!-- Resources -->
+      <div class="section-row">
+        <div class="section-heading">Resources</div>
+        <div class="grid-2">
+          <!-- Food storage -->
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-amber">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h12"/><path d="M6 14h12"/><path d="M12 2c-.94 1.24-3 4.08-3 6.5S10.34 12 12 12s3-1.02 3-3.5S12.94 3.24 12 2z"/></svg>
+                </div>
+                <span class="card-head-title">Food Storage</span>
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="simulateRefill()" id="refill-food-btn">Refill</button>
             </div>
-          </div>
-          <div class="controls-col">
-            <button
-              class="btn btn-primary btn-full"
-              id="feed-btn"
-              onclick="feedPet()"
-            >
-              🥣 Dispense Food Now
-            </button>
-            <div class="controls-grid">
-              <button class="btn btn-ghost" onclick="dispenseHalf()">
-                ½ Portion (40g)
-              </button>
-              <button class="btn btn-ghost" onclick="dispenseDouble()">
-                2× Portion (160g)
-              </button>
-            </div>
-            <div class="divider"></div>
-            <div class="controls-row">
-              <span>Auto-refill water when below 20%</span>
-              <label class="toggle-switch">
-                <input type="checkbox" checked id="auto-water" />
-                <span class="toggle-thumb"></span>
-              </label>
-            </div>
-            <div class="controls-row">
-              <span>Low-food notifications</span>
-              <label class="toggle-switch">
-                <input type="checkbox" checked id="notif-food" />
-                <span class="toggle-thumb"></span>
-              </label>
-            </div>
-            <div class="controls-row">
-              <span>Night-mode (quiet hours)</span>
-              <label class="toggle-switch">
-                <input type="checkbox" id="night-mode" />
-                <span class="toggle-thumb"></span>
-              </label>
-            </div>
-          </div>
-        </div>
+            <div class="card-body">
+              <div class="gauge-center">
+                <svg class="gauge-svg" viewBox="0 0 180 180" role="img" aria-label="Food level">
+                  <defs>
+                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="8" result="blur" />
+                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                  </defs>
+                  <circle class="gauge-track" cx="90" cy="90" r="78" />
+                  <circle class="gauge-fill" id="gauge-circle" cx="90" cy="90" r="78" stroke="var(--brand)" filter="url(#glow)" />
+                  <text class="gauge-value" id="gauge-text" x="90" y="84" fill="var(--brand)">72%</text>
+                  <text class="gauge-sub" x="90" y="104">Food Level</text>
+                </svg>
+                <span class="status-badge badge-ok" id="gauge-status-badge">Good</span>
+              </div>
+              <div class="prog-group" style="margin-bottom: 24px;">
+                <div class="prog-header">
+                  <span>Empty</span>
+                  <span class="prog-value" id="food-level">72%</span>
+                  <span>Full</span>
+                </div>
+                <div class="prog-track">
+                  <div class="prog-bar" id="food-prog" style="width:72%"></div>
+                </div>
+              </div>
 
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <div class="icon icon-amber">🗓️</div>
-              Feeding Schedule
+              <div class="res-grid">
+                <div class="res-box">
+                  <div class="res-val" id="est-cap" style="color:var(--brand)">3.5L</div>
+                  <div class="res-lbl">Capacity</div>
+                </div>
+                <div class="res-box">
+                  <div class="res-val" id="est-meals" style="color:var(--amber)">~60</div>
+                  <div class="res-lbl">Est. Meals</div>
+                </div>
+                <div class="res-box">
+                  <div class="res-val" id="food-status-txt" style="color:var(--green)">Fresh</div>
+                  <div class="res-lbl">Status</div>
+                </div>
+              </div>
             </div>
-            <button class="btn btn-ghost btn-sm" onclick="addSchedulePrompt()">
-              + Add
-            </button>
           </div>
-          <div class="schedule-list" id="schedule-list">
-            <div class="schedule-item">
-              <div>
-                <div class="schedule-time">07:00 AM</div>
-                <div class="schedule-info">Morning • 80g • Every day</div>
+
+          <!-- Load Cell & Dispense Verification -->
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-blue">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v17.25"/><path d="M6 12h12"/><path d="M6 6h12"/><path d="M6 18h12"/><rect x="2" y="2" width="20" height="20" rx="2"/></svg>
+                </div>
+                <span class="card-head-title">Load Cell &mdash; Dispense Verification</span>
               </div>
-              <label class="toggle-switch"
-                ><input type="checkbox" checked /><span
-                  class="toggle-thumb"
-                ></span
-              ></label>
+              <span class="badge badge-ok" id="dispense-status-badge">Verified</span>
             </div>
-            <div class="schedule-item">
-              <div>
-                <div class="schedule-time">12:30 PM</div>
-                <div class="schedule-info">Afternoon • 80g • Every day</div>
+            <div class="card-body">
+              <!-- Last dispense result -->
+              <div class="dispense-result" id="dispense-result">
+                <div class="dispense-main">
+                  <div class="dispense-weight" id="last-dispensed-weight">0.0g</div>
+                  <div class="dispense-label">Last Dispensed (HX711)</div>
+                </div>
+                <div class="dispense-check" id="dispense-check">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                </div>
               </div>
-              <label class="toggle-switch"
-                ><input type="checkbox" checked /><span
-                  class="toggle-thumb"
-                ></span
-              ></label>
-            </div>
-            <div class="schedule-item">
-              <div>
-                <div class="schedule-time">06:00 PM</div>
-                <div class="schedule-info">Evening • 80g • Every day</div>
+
+              <div class="card-divider"></div>
+
+              <!-- Target vs Actual -->
+              <div class="res-grid">
+                <div class="res-box">
+                  <div class="res-val" style="color:var(--brand)" id="target-weight-display">50g</div>
+                  <div class="res-lbl">Target</div>
+                </div>
+                <div class="res-box">
+                  <div class="res-val" id="actual-weight-display" style="color:var(--green)">0.0g</div>
+                  <div class="res-lbl">Actual</div>
+                </div>
+                <div class="res-box">
+                  <div class="res-val" id="weight-variance" style="color:var(--text-secondary)">--</div>
+                  <div class="res-lbl">Variance</div>
+                </div>
               </div>
-              <label class="toggle-switch"
-                ><input type="checkbox" checked /><span
-                  class="toggle-thumb"
-                ></span
-              ></label>
-            </div>
-            <div class="schedule-item sched-faded">
-              <div>
-                <div class="schedule-time">10:00 PM</div>
-                <div class="schedule-info">Late snack • 40g • Weekends</div>
+
+              <div class="card-divider"></div>
+
+              <!-- Hardware sensors strip -->
+              <div class="section-heading" style="margin-bottom:8px;margin-top:0;font-size:0.7rem;">Hardware Sensors</div>
+              <div class="sys-stack">
+                <div class="sys-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h6"/><path d="M22 12h-6"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4"/><path d="M12 18v4"/></svg>
+                  Ultrasonic (HC-SR04): <strong>Hopper Level</strong>
+                </div>
+                <div class="sys-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                  IR Beam (Anti-Jam): <strong id="ir-status">Clear</strong>
+                </div>
+                <div class="sys-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v17.25"/><path d="M6 12h12"/><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+                  Load Cell (HX711): <strong id="loadcell-status">Ready</strong>
+                </div>
               </div>
-              <label class="toggle-switch"
-                ><input type="checkbox" /><span class="toggle-thumb"></span
-              ></label>
             </div>
           </div>
         </div>
       </div>
-    </main>
 
-    <!-- ─────────────────────── SCRIPTS ─────────────────────────── -->
-    <script src="app.js"></script>
-  </body>
+      <!-- Analytics -->
+      <div class="section-row">
+        <div class="section-heading">Analytics</div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-brand">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                </div>
+                <span class="card-head-title">Feeding History &mdash; 7 Days</span>
+              </div>
+            </div>
+            <div class="card-body"><div class="chart-wrap"><canvas id="feedingChart"></canvas></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-green">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                </div>
+                <span class="card-head-title">Food Level Trend</span>
+              </div>
+            </div>
+            <div class="card-body"><div class="chart-wrap"><canvas id="levelChart"></canvas></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Distribution + Log -->
+      <div class="section-row">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon" style="background:rgba(225,29,72,0.08);color:#e11d48">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                </div>
+                <span class="card-head-title">Meal Distribution</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="meal-layout">
+                <div class="meal-donut"><canvas id="mealChart"></canvas></div>
+                <div class="meal-legend">
+                  <div class="legend-item"><span class="legend-dot ld-1"></span> Morning (7 AM) &mdash; <strong>80g</strong></div>
+                  <div class="legend-item"><span class="legend-dot ld-2"></span> Afternoon (12:30 PM) &mdash; <strong>80g</strong></div>
+                  <div class="legend-item"><span class="legend-dot ld-3"></span> Evening (6 PM) &mdash; <strong>80g</strong></div>
+                  <div class="legend-item"><span class="legend-dot ld-4"></span> Manual &mdash; <strong>variable</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-brand">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                </div>
+                <span class="card-head-title">Activity Log</span>
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="clearLog()" id="clear-log-btn">Clear</button>
+            </div>
+            <div class="card-body">
+              <div class="log-list" id="log-list">
+                <div class="log-item log-ok"><span class="log-time">12:30 PM</span><span class="log-msg">Scheduled feeding — 80g dispensed</span></div>
+                <div class="log-item log-ok"><span class="log-time">07:00 AM</span><span class="log-msg">Morning meal — 80g dispensed</span></div>
+                <div class="log-item log-warn"><span class="log-time">06:45 AM</span><span class="log-msg">Food level dropped below 30% — refill recommended</span></div>
+                <div class="log-item log-ok"><span class="log-time">Yesterday</span><span class="log-msg">Battery backup test — passed</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls & Schedule -->
+      <div class="section-row">
+        <div class="section-heading">Controls &amp; Schedule</div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-green">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                </div>
+                <span class="card-head-title">Manual Control</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="ctrl-section">
+                <button class="btn btn-primary btn-full" id="feed-btn" onclick="feedPet()">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h12"/><path d="M6 14h12"/><path d="M12 2c-.94 1.24-3 4.08-3 6.5S10.34 12 12 12s3-1.02 3-3.5S12.94 3.24 12 2z"/></svg>
+                  Dispense Food Now
+                </button>
+                <div class="ctrl-split">
+                  <button class="btn btn-outline" id="half-btn" onclick="dispenseHalf()">Half Portion (40g)</button>
+                  <button class="btn btn-outline" id="double-btn" onclick="dispenseDouble()">Double (160g)</button>
+                </div>
+                <div class="card-divider"></div>
+                <div class="ctrl-row"><span>Auto-refill water below 20%</span><label class="toggle"><input type="checkbox" checked id="auto-water" /><span class="toggle-track"></span></label></div>
+                <div class="ctrl-row"><span>Low-food notifications</span><label class="toggle"><input type="checkbox" checked id="notif-food" /><span class="toggle-track"></span></label></div>
+                <div class="ctrl-row"><span>Night-mode (quiet hours)</span><label class="toggle"><input type="checkbox" id="night-mode" /><span class="toggle-track"></span></label></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-head-left">
+                <div class="card-head-icon si-amber">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </div>
+                <span class="card-head-title">Feeding Schedule</span>
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="addSchedulePrompt()" id="add-sched-btn">Add</button>
+            </div>
+            <div class="card-body">
+              <div class="schedule-list" id="schedule-list">
+                <div class="schedule-item"><div><div class="schedule-time">07:00 AM</div><div class="schedule-info">Morning &middot; 80g &middot; Every day</div></div><label class="toggle"><input type="checkbox" checked /><span class="toggle-track"></span></label></div>
+                <div class="schedule-item"><div><div class="schedule-time">12:30 PM</div><div class="schedule-info">Afternoon &middot; 80g &middot; Every day</div></div><label class="toggle"><input type="checkbox" checked /><span class="toggle-track"></span></label></div>
+                <div class="schedule-item"><div><div class="schedule-time">06:00 PM</div><div class="schedule-info">Evening &middot; 80g &middot; Every day</div></div><label class="toggle"><input type="checkbox" checked /><span class="toggle-track"></span></label></div>
+                <div class="schedule-item sched-off"><div><div class="schedule-time">10:00 PM</div><div class="schedule-info">Late snack &middot; 40g &middot; Weekends</div></div><label class="toggle"><input type="checkbox" /><span class="toggle-track"></span></label></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main-panel -->
+</div><!-- /shell -->
+
+<script src="app.js"></script>
+</body>
 </html>

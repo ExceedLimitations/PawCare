@@ -1,16 +1,17 @@
 # 🐾 PawFeed — Smart IoT Pet Feeder Dashboard
 
-A real-time web dashboard for monitoring and controlling an IoT-connected automatic pet feeder. Built with Node.js, Express, Socket.io, and MQTT, PawFeed lets you track food/water levels, room temperature, dispense food manually, and manage automated feeding schedules — all from a browser.
+A real-time web dashboard for monitoring and controlling an IoT-connected automatic pet feeder. Built with Node.js, Express, Socket.io, and MQTT, PawFeed lets you track food levels, dispense food manually, verify dispensing weight via loadcell, and manage automated feeding schedules — all from a browser.
 
 ---
 
 ## Features
 
-- **Real-time monitoring** — live food level gauge, water level, and room temperature updated via MQTT and Socket.io
+- **Real-time monitoring** — live food level gauge updated via MQTT and Socket.io
 - **Manual dispensing** — trigger a food dispense with a configurable portion size from the dashboard
 - **Automated schedules** — pre-configured morning, afternoon, evening, and weekend snack schedules stored in a local JSON database
+- **Precise weight dispensing** — verifies food drop exactly to the target weight via a built-in load cell
 - **Feeding history** — logs every dispense (manual or scheduled) with timestamps and portion sizes
-- **Alerts & notifications** — visual warnings for low food, jams, and other hardware events
+- **Alerts & notifications** — visual warnings for low food, chute jams, and other hardware events
 - **Dark / light theme** — toggle between themes with persistent UI state
 - **Demo mode** — runs a simulated sensor feed automatically when no hardware is connected
 
@@ -111,16 +112,36 @@ The server publishes dispense commands to `MQTT_TOPIC_CMD` as JSON:
 { "action": "feed", "portion_g": 80 }
 ```
 
-The hardware should publish sensor readings to `MQTT_TOPIC_STATUS` / `MQTT_TOPIC_SENSOR`:
+### Sensor Telemetry
+
+The hardware publishes sensor readings to `MQTT_TOPIC_STATUS` / `MQTT_TOPIC_SENSOR`:
 
 ```json
 {
   "food_level": 72,
-  "water_level": 50,
-  "temperature": 22.5,
-  "jammed": false
+  "jammed": false,
+  "last_dispensed_g": 50.1,
+  "dispense_success": true
 }
 ```
+
+### ESP32 Pin Configuration
+
+When flashing `firmware.ino` to your ESP32, wire the hardware according to the following mapping:
+
+| Hardware Component | ESP32 Pin | Note |
+|---|---|---|
+| **Servo Motor (Dispenser)** | `GPIO 13` | Controls chute opening (`ESP32Servo`) |
+| **HC-SR04 Ultrasonic (Trigger)** | `GPIO 5` | Checks hopper food level |
+| **HC-SR04 Ultrasonic (Echo)** | `GPIO 18` | Use standard 5V->3.3V logic level shift |
+| **IR Jam Sensor (FC-51 / Break-beam)** | `GPIO 19` | Detects food blockages (`INPUT_PULLUP`). Polarity customizable via `IR_JAM_STATE`. |
+| **HX711 Load Cell (DOUT)** | `GPIO 21` | Scale output |
+| **HX711 Load Cell (SCK)** | `GPIO 22` | Scale clock |
+| **Piezo Buzzer** | `GPIO 4` | Auditory alerts / dispensing cues |
+| **Status LED** | `GPIO 2` | System health indication |
+| **Alert/Error LED** | `GPIO 15` | Critical fault warning |
+
+*Note: For the IR Sensor, flip `IR_JAM_STATE` to `HIGH` if utilizing a slot break-beam sensor instead of standard reflectance modules.*
 
 When no hardware is connected and the page is opened without a live server, the dashboard automatically enters **demo simulation mode**.
 
