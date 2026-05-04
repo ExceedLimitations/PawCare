@@ -5,8 +5,8 @@
 // #include "HX711.h" // <-- Commented out for simulation
 
 // --- NETWORK CONFIG ---
-const char* ssid = "IEEEE";
-const char* password = "hesyespes";
+const char* ssid = "wifi";
+const char* password = "password";
 const char* mqtt_server = "broker.hivemq.com"; 
 
 // --- PIN ASSIGNMENTS ---
