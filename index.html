@@ -7,7 +7,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <script src="/socket.io/socket.io.js"></script>
+  <!-- Socket.io: loaded from CDN so it works on both local Express and Netlify.
+       app.js guards all socket usage with `if (typeof io !== 'undefined')`. -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -68,10 +70,22 @@
         <span class="topbar-title">Dashboard</span>
       </div>
       <div class="topbar-right">
-        <button class="topbar-btn" id="notif-btn" title="Notifications" onclick="toggleNotif()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-          <span class="topbar-badge" id="notif-badge"></span>
-        </button>
+        <div style="position:relative;">
+          <button class="topbar-btn" id="notif-btn" title="Notifications" onclick="toggleNotif()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+            <span class="topbar-badge" id="notif-badge"></span>
+          </button>
+          <!-- Notification drawer -->
+          <div class="notif-drawer" id="notif-drawer" style="display:none;">
+            <div class="notif-drawer-head">
+              <span class="notif-drawer-title">Notifications</span>
+              <button class="notif-clear-btn" onclick="clearNotifications()">Mark all read</button>
+            </div>
+            <div class="notif-list" id="notif-list">
+              <div class="notif-empty" id="notif-empty">No notifications yet</div>
+            </div>
+          </div>
+        </div>
         <button class="topbar-btn" id="theme-btn" title="Toggle theme" onclick="toggleTheme()">
           <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
           <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
@@ -129,6 +143,14 @@
       <!-- Pet & Status -->
       <div class="section-row">
         <div class="section-heading">Pet &amp; Status</div>
+        <!-- Critical alert banner: shown by JS when jammed -->
+        <div class="critical-banner" id="critical-alert-banner" style="display:none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <div class="critical-banner-text">
+            <div class="critical-banner-title" id="critical-banner-title">Critical Alert</div>
+            <div class="critical-banner-sub" id="critical-banner-sub">Immediate attention required</div>
+          </div>
+        </div>
         <div class="grid-2">
           <!-- Pet profile -->
           <div class="card">
@@ -391,10 +413,10 @@
             </div>
             <div class="card-body">
               <div class="log-list" id="log-list">
-                <div class="log-item log-ok"><span class="log-time">12:30 PM</span><span class="log-msg">Scheduled feeding — 80g dispensed</span></div>
-                <div class="log-item log-ok"><span class="log-time">07:00 AM</span><span class="log-msg">Morning meal — 80g dispensed</span></div>
-                <div class="log-item log-warn"><span class="log-time">06:45 AM</span><span class="log-msg">Food level dropped below 30% — refill recommended</span></div>
-                <div class="log-item log-ok"><span class="log-time">Yesterday</span><span class="log-msg">Battery backup test — passed</span></div>
+                <div class="log-item log-ok"><span class="log-time">12:30 PM</span><span class="log-icon">✓</span><span class="log-msg">Scheduled feeding — 80g dispensed</span></div>
+                <div class="log-item log-ok"><span class="log-time">07:00 AM</span><span class="log-icon">✓</span><span class="log-msg">Morning meal — 80g dispensed</span></div>
+                <div class="log-item log-warn"><span class="log-time">06:45 AM</span><span class="log-icon">⚠</span><span class="log-msg">Food level dropped below 30% — refill recommended</span></div>
+                <div class="log-item log-ok"><span class="log-time">Yesterday</span><span class="log-icon">✓</span><span class="log-msg">Battery backup test — passed</span></div>
               </div>
             </div>
           </div>

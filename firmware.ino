@@ -2,7 +2,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
-#include "HX711.h"
+// #include "HX711.h" // <-- Commented out for simulation
 
 // --- NETWORK CONFIG ---
 const char* ssid = "IEEEE";
@@ -17,13 +17,10 @@ const char* mqtt_server = "broker.hivemq.com";
 #define BUZZER_PIN        4  
 #define STATUS_LED_PIN    2   
 #define ALERT_LED_PIN     15  
-#define LOADCELL_DOUT_PIN 21  
-#define LOADCELL_SCK_PIN  22  
 
 // --- SETTINGS & GLOBALS ---
 #define IR_JAM_STATE      LOW 
 const int targetWeight = 50; 
-float calibration_factor = -7050.0; 
 const int emptyThreshold = 10; 
 const float bowlHasFoodThreshold = 10.0; 
 const int jamTimeout = 1500; 
@@ -34,9 +31,11 @@ bool lastDispenseSuccessful = false;
 int lastValidLevel = 72; 
 
 unsigned long lastAutoFeedTime = 0;
-const unsigned long feedCooldown = 60000; // 1-minute cooldown between auto-feeds
+const unsigned long feedCooldown = 60000;
 
-HX711 scale;
+// --- SIMULATION VARIABLES ---
+float simulatedBowlWeight = 0.0; // Replaces the load cell reading
+
 WiFiClient espClient;
 PubSubClient client(espClient);
 Servo feederServo;
@@ -47,10 +46,8 @@ int getDistance() {
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
-
   long duration = pulseIn(ECHO_PIN, HIGH, 30000); 
-  int distance = duration * 0.034 / 2;
-  return distance;
+  return (duration * 0.034 / 2);
 }
 
 void setup() {
@@ -62,9 +59,8 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
-  scale.set_scale(calibration_factor);
-  scale.tare(); 
+  // scale.begin(...);  <-- Disabled for simulation
+  // scale.tare();      <-- Disabled for simulation
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) { 
@@ -74,7 +70,7 @@ void setup() {
   }
   
   digitalWrite(STATUS_LED_PIN, HIGH); 
-  Serial.println("\n✅ Wi-Fi Connected. System Ready."); 
+  Serial.println("\n✅ Wi-Fi Connected. System Ready (SIMULATION MODE)."); 
 
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
@@ -86,7 +82,6 @@ void setup() {
 
 void triggerFlowchartAlert(String message) {
   Serial.println(message);
-  
   digitalWrite(ALERT_LED_PIN, HIGH);
   for(int i=0; i<3; i++) {
     digitalWrite(BUZZER_PIN, HIGH);
@@ -94,7 +89,6 @@ void triggerFlowchartAlert(String message) {
     digitalWrite(BUZZER_PIN, LOW);
     delay(200);
   }
-  
   StaticJsonDocument<200> doc;
   doc["alert_message"] = message;
   char buffer[256];
@@ -102,7 +96,7 @@ void triggerFlowchartAlert(String message) {
   client.publish("pawfeed/karyl/alerts", buffer);
 }
 
-// Manual Override via Dashboard
+// --- MQTT COMMANDS ---
 void callback(char* topic, byte* payload, unsigned int length) {
   StaticJsonDocument<200> doc;
   deserializeJson(doc, payload, length);
@@ -111,56 +105,48 @@ void callback(char* topic, byte* payload, unsigned int length) {
     systemJammed = false; 
     digitalWrite(ALERT_LED_PIN, LOW);
     dispenseByWeight(); 
+  } 
+  else if (String(doc["action"]) == "empty") {
+    // NEW: Simulate the pet eating the food so you can test again
+    simulatedBowlWeight = 0.0;
+    Serial.println("🐕 SIMULATION: Pet ate the food. Bowl is now empty (0.0g).");
+    sendTelemetry(lastValidLevel);
   }
 }
 
-// --- FLOWCHART LOGIC (Left Side) ---
 void loop() {
   if (!client.connected()) reconnect();
   client.loop();
 
-  // 1. Check Hopper Food Level (Ultrasonic Sensor)
   int dist = getDistance();
   if (dist > 0 && dist < 200) {
     lastValidLevel = constrain(map(dist, 2, 20, 100, 0), 0, 100);
   }
 
-  // 2. Check Food in Pet Bowl (Read Load Cell)
-  float currentBowlWeight = 0;
-  if (scale.is_ready()) {
-    currentBowlWeight = scale.get_units(3); 
-  }
-
   static bool stateAlerted = false;
 
-  // Flowchart Decision 1: Is Food Level Low/Empty?
+  // Uses simulatedBowlWeight instead of scale.get_units()
   if (lastValidLevel < emptyThreshold) {
     if (!stateAlerted) {
       triggerFlowchartAlert("ABORT: Hopper is empty. Send Refill Alert.");
-      stateAlerted = true; // Prevents endless alert spamming
+      stateAlerted = true; 
     }
   } 
-  // Flowchart Decision 2: Is there still food in the pet bowl?
-  else if (currentBowlWeight > bowlHasFoodThreshold) {
+  else if (simulatedBowlWeight > bowlHasFoodThreshold) {
     if (!stateAlerted) {
       triggerFlowchartAlert("STATUS: Food is still present in the pet bowl.");
       stateAlerted = true;
     }
   } 
-  // Both checks pass -> Proceed to Trigger
   else {
-    stateAlerted = false; // Reset alert state
-
-    // Flowchart: Scheduling Feed / Manual Trigger
-    // Automatically triggers feed based on empty bowl sensor reading
+    stateAlerted = false; 
     if (millis() - lastAutoFeedTime > feedCooldown && !systemJammed) {
-      Serial.println("AUTON: Sensors clear. Automatically Activating Servo Motor...");
+      Serial.println("AUTON: Sensors clear. Automatically Activating Servo...");
       dispenseByWeight();
       lastAutoFeedTime = millis();
     }
   }
 
-  // Passive Jam Check outside of dispensing
   if (digitalRead(IR_PIN) == IR_JAM_STATE) {
     static unsigned long passiveJamStart = millis();
     if (millis() - passiveJamStart > 3000) {
@@ -182,22 +168,22 @@ void loop() {
   }
 }
 
-// --- WEIGHT-BASED DISPENSING LOOP (Right Side of Flowchart) ---
+// --- SIMULATED WEIGHT DISPENSING ---
 void dispenseByWeight() {
   Serial.println("ACTIVATE SERVO MOTOR...");
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
 
-  scale.tare(); 
+  simulatedBowlWeight = 0.0; // Tare the simulated scale
   feederServo.write(90); 
 
   float currentWeight = 0;
   unsigned long irBlockStartTime = 0;
   unsigned long dispenseStartTime = millis(); 
+  unsigned long lastSimDropTime = millis(); // Timer for simulated food falling
   bool isIrBlocked = false;
 
-  // "Is Target Weight Reached? -> NO -> Loop"
   while (currentWeight < targetWeight) { 
     
     if (millis() - dispenseStartTime > 15000) {
@@ -205,31 +191,29 @@ void dispenseByWeight() {
       break;
     }
 
-    // Read Load Cell
-    if (scale.is_ready()) {
-      currentWeight = scale.get_units(); 
+    // --- SIMULATION LOGIC ---
+    // Add 2.5 grams of "food" every 200 milliseconds while the loop runs
+    if (millis() - lastSimDropTime > 200) {
+      simulatedBowlWeight += 2.5; 
+      currentWeight = simulatedBowlWeight;
+      lastSimDropTime = millis();
+      Serial.print("Simulated Bowl Weight: ");
+      Serial.print(currentWeight);
+      Serial.println("g");
     }
     
+    // --- JAM DETECTION PROCESS PHASE FLOWCHART ---
     if (digitalRead(IR_PIN) == IR_JAM_STATE) { 
       if (!isIrBlocked) {
         isIrBlocked = true;
         irBlockStartTime = millis(); 
       } else if (millis() - irBlockStartTime > jamTimeout) {
-          Serial.println("PROLONGED OBSTRUCTION: Executing Anti-Jam...");
+          Serial.println("JAM DETECTED: Executing Anti-Jam Sequence...");
           feederServo.write(0); 
           delay(1000);
-          feederServo.write(90); 
-          delay(1000);
-          
-          if (digitalRead(IR_PIN) == IR_JAM_STATE) {
-            Serial.println("CRITICAL FAULT: Jam cannot be cleared.");
-            systemJammed = true;
-            digitalWrite(ALERT_LED_PIN, HIGH); 
-            break; 
-          } else {
-            isIrBlocked = false; 
-            dispenseStartTime = millis();
-          }
+          systemJammed = true; 
+          triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
+          break; 
       }
     } else {
       isIrBlocked = false; 
@@ -237,15 +221,15 @@ void dispenseByWeight() {
     delay(50); 
   }
 
-  // "Is Target Weight Reached? -> YES -> Stop Servo Motor -> END"
-  feederServo.write(0); 
+  if (!systemJammed) {
+    feederServo.write(0); 
+  }
   
   Serial.println("Stop Servo Motor. Allowing scale to settle...");
   delay(1500); 
   
-  if (scale.is_ready()) {
-    lastDispensedWeight = scale.get_units();
-  }
+  // Update last dispensed weight from simulation
+  lastDispensedWeight = simulatedBowlWeight;
 
   if (lastDispensedWeight >= (targetWeight - 2.0)) {
     lastDispenseSuccessful = true;
@@ -266,6 +250,7 @@ void sendTelemetry(int level) {
   doc["jammed"] = systemJammed; 
   doc["last_dispensed_g"] = lastDispensedWeight; 
   doc["dispense_success"] = lastDispenseSuccessful;
+  doc["bowl_weight"] = simulatedBowlWeight; // Send simulated weight to dashboard
 
   char buffer[256];
   serializeJson(doc, buffer);

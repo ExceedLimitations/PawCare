@@ -2,3 +2,7 @@ node_modules/
 .env
 pawfeed.json
 npm-debug.log*
+
+# Netlify
+.netlify/
+netlify/functions/.cache/

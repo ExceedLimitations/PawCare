@@ -23,9 +23,77 @@ function closeSidebar() {
 }
 
 /* ── Notifications ─────────────────────────────────────────────── */
+let notifCount = 0;
+let notifItems = [];
+
 function toggleNotif() {
-  const badge = document.getElementById("notif-badge");
-  badge.style.display = badge.style.display === "none" ? "" : "none";
+  const drawer = document.getElementById('notif-drawer');
+  const isOpen = drawer.style.display !== 'none';
+  if (isOpen) {
+    drawer.style.display = 'none';
+  } else {
+    drawer.style.display = 'block';
+    // close when clicking outside
+    setTimeout(() => {
+      document.addEventListener('click', closeNotifOutside, { once: true });
+    }, 10);
+  }
+}
+
+function closeNotifOutside(e) {
+  const drawer = document.getElementById('notif-drawer');
+  const btn    = document.getElementById('notif-btn');
+  if (drawer && !drawer.contains(e.target) && !btn.contains(e.target)) {
+    drawer.style.display = 'none';
+  }
+}
+
+function updateNotifBadge() {
+  const badge = document.getElementById('notif-badge');
+  if (!badge) return;
+  if (notifCount > 0) {
+    badge.textContent = notifCount > 9 ? '9+' : notifCount;
+    badge.classList.remove('has-notif', 'urgent');
+    // force reflow so animation re-triggers
+    void badge.offsetWidth;
+    badge.classList.add('has-notif', 'urgent');
+  } else {
+    badge.textContent = '';
+    badge.classList.remove('has-notif', 'urgent');
+  }
+}
+
+function pushNotif(type, msg) {
+  notifCount++;
+  notifItems.unshift({ type, msg, time: new Date() });
+  const list  = document.getElementById('notif-list');
+  const empty = document.getElementById('notif-empty');
+  if (empty) empty.style.display = 'none';
+  const icons = { ok: '✓', warn: '⚠', err: '✕' };
+  const typeClass = type === 'err' ? 'notif-critical' : type === 'warn' ? 'notif-warn' : 'notif-ok';
+  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const item = document.createElement('div');
+  item.className = `notif-item ${typeClass} unread`;
+  item.innerHTML = `
+    <div class="notif-item-icon">${icons[type] || '•'}</div>
+    <div class="notif-item-body">
+      <div class="notif-item-msg">${msg}</div>
+      <div class="notif-item-time">${now}</div>
+    </div>`;
+  list.insertBefore(item, list.firstChild);
+  updateNotifBadge();
+}
+
+function clearNotifications() {
+  notifCount = 0;
+  notifItems = [];
+  const list  = document.getElementById('notif-list');
+  const empty = document.getElementById('notif-empty');
+  if (list)  list.innerHTML = '';
+  if (empty) { empty.style.display = ''; list.appendChild(empty); }
+  document.querySelectorAll('.notif-item').forEach(el => el.classList.remove('unread'));
+  updateNotifBadge();
+  document.getElementById('notif-drawer').style.display = 'none';
 }
 
 /* ── Gauge ─────────────────────────────────────────────────────── */
@@ -83,6 +151,18 @@ function setGauge(pct) {
 
   const avg = document.getElementById("stat-avg");
   if (avg) avg.textContent = pct + "%";
+
+  updateFoodLevelCard(pct);
+}
+
+function updateFoodLevelCard(pct) {
+  const cards = document.querySelectorAll('.summary-card');
+  // 3rd card = Avg Food Level
+  if (cards.length < 3) return;
+  const card = cards[2];
+  card.classList.remove('sc-critical', 'sc-warn');
+  if (pct <= 20)       card.classList.add('sc-critical');
+  else if (pct <= 40)  card.classList.add('sc-warn');
 }
 
 /* ── Water ─────────────────────────────────────────────────────── */
@@ -167,81 +247,109 @@ function setLoadcellStatus(data) {
 
 /* ── Socket.io ─────────────────────────────────────────────────── */
 let socket;
-try {
-  socket = io({ transports: ["websocket", "polling"] });
 
-  socket.on("connect", () => {
-    console.log("[Socket.io] Connected —", socket.id);
-    setConnectionStatus(true);
-  });
-  socket.on("disconnect", () => {
-    console.warn("[Socket.io] Disconnected");
-    setConnectionStatus(false);
-  });
-  socket.on("connect_error", () => setConnectionStatus(false));
+// Detect Netlify / any static hosting where no Socket.io server exists.
+// Falls back to pure REST polling + demo simulation in that case.
+const IS_NETLIFY =
+  typeof io === "undefined" ||
+  window.location.hostname.endsWith(".netlify.app") ||
+  window.location.hostname === "localhost" === false && !window.location.port;
 
-  socket.on("status", (data) => {
-    if (data.food_level != null) setGauge(data.food_level);
-    setLoadcellStatus(data);
+if (typeof io !== "undefined" && !window.location.hostname.endsWith(".netlify.app")) {
+  try {
+    socket = io({ transports: ["websocket", "polling"], timeout: 3000 });
 
-    const alertBox = document.getElementById("jam-alert-box");
-    const alertTxt = document.getElementById("jam-alert");
-    const badge = document.getElementById("alert-count-badge");
-
-    if (data.jammed) {
-      alertBox.className = "alert-box alert-err";
-      alertTxt.textContent = "MECHANICAL JAM — please inspect immediately.";
-      badge.textContent = "1 Alert";
-      badge.className = "badge badge-err";
-      appendLog("err", "Mechanical jam detected");
-      document.getElementById("notif-badge").style.display = "";
-    } else {
-      alertBox.className = "alert-box alert-ok";
-      alertTxt.textContent = "System operating normally — no issues detected.";
-      badge.textContent = "All Clear";
-      badge.className = "badge badge-ok";
-    }
-  });
-
-  socket.on("feeding_done", (data) => {
-    const btn = document.getElementById("feed-btn");
-    btn.classList.remove("feeding");
-    btn.disabled = false;
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M6 20h12"/><path d="M6 14h12"/><path d="M12 2c-.94 1.24-3 4.08-3 6.5S10.34 12 12 12s3-1.02 3-3.5S12.94 3.24 12 2z"/></svg> Dispense Food Now`;
-    feedCount++;
-    document.getElementById("stat-today").textContent = feedCount;
-    const heroF = document.getElementById("hero-feedings");
-    if (heroF) heroF.textContent = feedCount;
-    const t = new Date(data.timestamp).toLocaleTimeString([], {
-      hour: "2-digit", minute: "2-digit",
+    socket.on("connect", () => {
+      console.log("[Socket.io] Connected —", socket.id);
+      setConnectionStatus(true);
     });
-    document.getElementById("stat-last").textContent = t;
-    const label = data.type === "scheduled" ? "Scheduled" : "Manual";
-    appendLog("ok", `${label} dispense — ${data.portion_g}g at ${t}`);
-    if (feedingChart) {
-      const last = feedingChart.data.datasets[0].data;
-      last[last.length - 1] = (last[last.length - 1] || 0) + 1;
-      feedingChart.update();
-    }
-  });
+    socket.on("disconnect", () => {
+      console.warn("[Socket.io] Disconnected");
+      setConnectionStatus(false);
+    });
+    socket.on("connect_error", () => setConnectionStatus(false));
 
-  socket.on("alert", (data) => {
-    appendLog(data.level === "error" ? "err" : "warn", data.message);
-    document.getElementById("notif-badge").style.display = "";
-  });
+    socket.on("status", (data) => {
+      if (data.food_level != null) setGauge(data.food_level);
+      setLoadcellStatus(data);
 
-  socket.on("feedings_today", (data) => {
-    if (data.count != null) {
-      feedCount = data.count;
+      const alertBox    = document.getElementById("jam-alert-box");
+      const alertTxt    = document.getElementById("jam-alert");
+      const badge       = document.getElementById("alert-count-badge");
+      const banner      = document.getElementById("critical-alert-banner");
+      const bannerTitle = document.getElementById("critical-banner-title");
+      const bannerSub   = document.getElementById("critical-banner-sub");
+      const alertCard   = alertBox ? alertBox.closest('.card') : null;
+
+      if (data.jammed) {
+        alertBox.className = "alert-box alert-err";
+        alertTxt.textContent = "MECHANICAL JAM — please inspect immediately.";
+        badge.textContent = "1 Alert";
+        badge.className = "badge badge-err";
+        // Show full-width banner
+        if (banner) {
+          bannerTitle.textContent = "Mechanical Jam Detected";
+          bannerSub.textContent   = "The dispenser is blocked. Please inspect the feeder immediately.";
+          banner.style.display = 'flex';
+        }
+        // Accent the System Alerts card
+        if (alertCard) alertCard.classList.add('card-alert-critical');
+        appendLog("err", "Mechanical jam detected");
+        pushNotif("err", "Mechanical jam detected — inspect immediately.");
+      } else {
+        alertBox.className = "alert-box alert-ok";
+        alertTxt.textContent = "System operating normally — no issues detected.";
+        badge.textContent = "All Clear";
+        badge.className = "badge badge-ok";
+        if (banner) banner.style.display = 'none';
+        if (alertCard) alertCard.classList.remove('card-alert-critical', 'card-alert-warn');
+      }
+    });
+
+    socket.on("feeding_done", (data) => {
+      const btn = document.getElementById("feed-btn");
+      btn.classList.remove("feeding");
+      btn.disabled = false;
+      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M6 20h12"/><path d="M6 14h12"/><path d="M12 2c-.94 1.24-3 4.08-3 6.5S10.34 12 12 12s3-1.02 3-3.5S12.94 3.24 12 2z"/></svg> Dispense Food Now`;
+      feedCount++;
       document.getElementById("stat-today").textContent = feedCount;
       const heroF = document.getElementById("hero-feedings");
       if (heroF) heroF.textContent = feedCount;
-    }
-  });
-} catch (_) {
-  console.info("[PawFeed] Socket.io unavailable — demo mode");
-  startDemoSimulation();
+      const t = new Date(data.timestamp).toLocaleTimeString([], {
+        hour: "2-digit", minute: "2-digit",
+      });
+      document.getElementById("stat-last").textContent = t;
+      const label = data.type === "scheduled" ? "Scheduled" : "Manual";
+      appendLog("ok", `${label} dispense — ${data.portion_g}g at ${t}`);
+      if (feedingChart) {
+        const last = feedingChart.data.datasets[0].data;
+        last[last.length - 1] = (last[last.length - 1] || 0) + 1;
+        feedingChart.update();
+      }
+    });
+
+    socket.on("alert", (data) => {
+      const type = data.level === "error" ? "err" : "warn";
+      appendLog(type, data.message);
+      pushNotif(type, data.message);
+    });
+
+    socket.on("feedings_today", (data) => {
+      if (data.count != null) {
+        feedCount = data.count;
+        document.getElementById("stat-today").textContent = feedCount;
+        const heroF = document.getElementById("hero-feedings");
+        if (heroF) heroF.textContent = feedCount;
+      }
+    });
+  } catch (_) {
+    console.info("[PawFeed] Socket.io unavailable — demo mode");
+    startDemoSimulation();
+  }
+} else {
+  console.info("[PawFeed] Running in static/Netlify mode — REST polling only");
 }
+
 
 function setConnectionStatus(online) {
   const pill = document.getElementById("status-pill");
@@ -312,12 +420,11 @@ function simulateWater() {
 function appendLog(type, msg) {
   const list = document.getElementById("log-list");
   if (!list) return;
-  const now = new Date().toLocaleTimeString([], {
-    hour: "2-digit", minute: "2-digit",
-  });
+  const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const icons = { ok: '✓', warn: '⚠', err: '✕' };
   const item = document.createElement("div");
   item.className = `log-item log-${type}`;
-  item.innerHTML = `<span class="log-time">${now}</span><span class="log-msg">${msg}</span>`;
+  item.innerHTML = `<span class="log-time">${now}</span><span class="log-icon">${icons[type] || '•'}</span><span class="log-msg">${msg}</span>`;
   list.insertBefore(item, list.firstChild);
   if (list.children.length > 20) list.removeChild(list.lastChild);
 }

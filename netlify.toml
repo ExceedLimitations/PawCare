@@ -1,0 +1,65 @@
+# ── PawFeed — Netlify Configuration ─────────────────────────────
+
+[build]
+  # No build step needed — pure static files + functions
+  publish = "."
+  functions = "netlify/functions"
+  command = ""
+
+# Redirect all /api/* calls to the matching serverless function
+[[redirects]]
+  from   = "/feed"
+  to     = "/.netlify/functions/feed"
+  status = 200
+
+[[redirects]]
+  from   = "/feedings/today"
+  to     = "/.netlify/functions/feedings-today"
+  status = 200
+
+[[redirects]]
+  from   = "/feedings/weekly"
+  to     = "/.netlify/functions/feedings-weekly"
+  status = 200
+
+[[redirects]]
+  from   = "/feedings/recent"
+  to     = "/.netlify/functions/feedings-recent"
+  status = 200
+
+[[redirects]]
+  from   = "/status"
+  to     = "/.netlify/functions/status"
+  status = 200
+
+[[redirects]]
+  from   = "/sensor/history"
+  to     = "/.netlify/functions/sensor-history"
+  status = 200
+
+[[redirects]]
+  from   = "/schedules"
+  to     = "/.netlify/functions/schedules"
+  status = 200
+
+[[redirects]]
+  from   = "/schedules/:id"
+  to     = "/.netlify/functions/schedules-id?id=:id"
+  status = 200
+
+# SPA fallback — serve index.html for any unmatched path
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+[functions]
+  node_bundler = "esbuild"
+  # mqtt uses native addons — exclude it from bundling; functions that need
+  # MQTT publish should use the HiveMQ HTTP REST API instead (already done).
+  included_files = ["netlify/functions/**"]
+
+[dev]
+  command   = "node server.js"
+  port      = 3000
+  targetPort = 3000
