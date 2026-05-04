@@ -747,3 +747,36 @@ function addSchedulePrompt() {
     .catch(() => {});
   appendLog("ok", `New schedule added: ${t}`);
 }
+
+/* ── Navigation ────────────────────────────────────────────────── */
+function navTo(sectionId, element) {
+  // Update active state
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  if (element) element.classList.add('active');
+
+  // Scroll to section
+  const section = document.getElementById(sectionId);
+  if (section) {
+    const topbarOffset = 76; // topbar height + padding
+    const elementPosition = section.getBoundingClientRect().top + window.pageYOffset;
+    window.scrollTo({
+      top: elementPosition - topbarOffset,
+      behavior: 'smooth'
+    });
+  }
+}
+
+/* ── Minimize sidebar ──────────────────────────────────────────── */
+function toggleSidebarMinimize() {
+  const shell = document.querySelector('.shell');
+  shell.classList.toggle('sidebar-minimized');
+  const isMinimized = shell.classList.contains('sidebar-minimized');
+  localStorage.setItem('sidebar-minimized', isMinimized);
+}
+
+// On load, apply saved state for minimized sidebar
+window.addEventListener('DOMContentLoaded', () => {
+  if (localStorage.getItem('sidebar-minimized') === 'true') {
+    document.querySelector('.shell').classList.add('sidebar-minimized');
+  }
+});

@@ -111,7 +111,7 @@ button { font-family: inherit; }
   left: 0;
   bottom: 0;
   z-index: 100;
-  transition: transform 0.3s ease;
+  transition: transform 0.3s ease, width 0.3s ease;
 }
 
 .sidebar-brand {
@@ -233,6 +233,7 @@ button { font-family: inherit; }
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  transition: margin-left 0.3s ease;
 }
 
 /* ── Topbar ─────────────────────────────────────────────────────── */
@@ -1174,6 +1175,41 @@ input:checked + .toggle-track::before {
 }
 
 .sched-off { opacity: 0.4; }
+
+/* ── Minimized Sidebar ─────────────────────────────────────────── */
+.shell.sidebar-minimized {
+  --sidebar-width: 80px;
+}
+
+.shell.sidebar-minimized .brand-label,
+.shell.sidebar-minimized .sidebar-section-label,
+.shell.sidebar-minimized .nav-label,
+.shell.sidebar-minimized .status-label {
+  display: none;
+}
+
+.shell.sidebar-minimized .sidebar-status {
+  padding: 8px;
+  justify-content: center;
+}
+
+.shell.sidebar-minimized .sidebar-status-dot {
+  margin: 0;
+}
+
+.shell.sidebar-minimized .sidebar-brand {
+  justify-content: center;
+  padding: 20px 10px 16px;
+}
+
+.shell.sidebar-minimized .nav-item {
+  justify-content: center;
+  padding: 12px;
+}
+
+.shell.sidebar-minimized .nav-item svg {
+  margin: 0;
+}
 
 /* ── Mobile overlay ─────────────────────────────────────────────── */
 .sidebar-overlay {
