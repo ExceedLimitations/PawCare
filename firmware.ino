@@ -2,7 +2,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
-// #include "HX711.h" // <-- Commented out for simulation
+#include "HX711.h"
 
 // --- NETWORK CONFIG ---
 const char* ssid = "wifi";
@@ -17,6 +17,7 @@ const char* mqtt_server = "broker.hivemq.com";
 #define BUZZER_PIN        4  
 #define STATUS_LED_PIN    2   
 #define ALERT_LED_PIN     15  
+#define BUTTON_PIN        14   // Added for manual dispense button
 
 // --- SETTINGS & GLOBALS ---
 #define IR_JAM_STATE      LOW 
@@ -33,8 +34,11 @@ int lastValidLevel = 72;
 unsigned long lastAutoFeedTime = 0;
 const unsigned long feedCooldown = 60000;
 
-// --- SIMULATION VARIABLES ---
-float simulatedBowlWeight = 0.0; // Replaces the load cell reading
+// --- LOAD CELL CONFIG ---
+#define LOADCELL_DOUT_PIN 21
+#define LOADCELL_SCK_PIN 22
+HX711 scale;
+float currentBowlWeight = 0.0;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -53,14 +57,15 @@ int getDistance() {
 void setup() {
   Serial.begin(115200);
   pinMode(IR_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_PIN, INPUT_PULLUP); // Setup manual dispense button
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(STATUS_LED_PIN, OUTPUT);
   pinMode(ALERT_LED_PIN, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  // scale.begin(...);  <-- Disabled for simulation
-  // scale.tare();      <-- Disabled for simulation
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  scale.tare();
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) { 
@@ -70,7 +75,7 @@ void setup() {
   }
   
   digitalWrite(STATUS_LED_PIN, HIGH); 
-  Serial.println("\n✅ Wi-Fi Connected. System Ready (SIMULATION MODE)."); 
+  Serial.println("\n✅ Wi-Fi Connected. System Ready."); 
 
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
@@ -107,9 +112,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     dispenseByWeight(); 
   } 
   else if (String(doc["action"]) == "empty") {
-    // NEW: Simulate the pet eating the food so you can test again
-    simulatedBowlWeight = 0.0;
-    Serial.println("🐕 SIMULATION: Pet ate the food. Bowl is now empty (0.0g).");
+    scale.tare();
+    Serial.println("🐕 ACTION: Scale tared. Bowl is now empty (0.0g).");
     sendTelemetry(lastValidLevel);
   }
 }
@@ -118,6 +122,18 @@ void loop() {
   if (!client.connected()) reconnect();
   client.loop();
 
+  // Manual dispense button check with simple debounce
+  static bool lastButtonState = HIGH;
+  bool currentButtonState = digitalRead(BUTTON_PIN);
+  if (lastButtonState == HIGH && currentButtonState == LOW) {
+    Serial.println("BUTTON PRESSED: Manual dispense requested.");
+    systemJammed = false;
+    digitalWrite(ALERT_LED_PIN, LOW);
+    dispenseByWeight();
+    delay(200); // Debounce delay
+  }
+  lastButtonState = currentButtonState;
+
   int dist = getDistance();
   if (dist > 0 && dist < 200) {
     lastValidLevel = constrain(map(dist, 2, 20, 100, 0), 0, 100);
@@ -125,14 +141,17 @@ void loop() {
 
   static bool stateAlerted = false;
 
-  // Uses simulatedBowlWeight instead of scale.get_units()
+  if (scale.is_ready()) {
+    currentBowlWeight = scale.get_units(5); // Read average of 5 readings
+  }
+
   if (lastValidLevel < emptyThreshold) {
     if (!stateAlerted) {
       triggerFlowchartAlert("ABORT: Hopper is empty. Send Refill Alert.");
       stateAlerted = true; 
     }
   } 
-  else if (simulatedBowlWeight > bowlHasFoodThreshold) {
+  else if (currentBowlWeight > bowlHasFoodThreshold) {
     if (!stateAlerted) {
       triggerFlowchartAlert("STATUS: Food is still present in the pet bowl.");
       stateAlerted = true;
@@ -168,21 +187,21 @@ void loop() {
   }
 }
 
-// --- SIMULATED WEIGHT DISPENSING ---
+// --- WEIGHT DISPENSING ---
 void dispenseByWeight() {
   Serial.println("ACTIVATE SERVO MOTOR...");
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
 
-  simulatedBowlWeight = 0.0; // Tare the simulated scale
+  scale.tare(); // Tare the actual scale
   feederServo.write(90); 
 
   float currentWeight = 0;
   unsigned long irBlockStartTime = 0;
   unsigned long dispenseStartTime = millis(); 
-  unsigned long lastSimDropTime = millis(); // Timer for simulated food falling
   bool isIrBlocked = false;
+  unsigned long lastPrintTime = millis();
 
   while (currentWeight < targetWeight) { 
     
@@ -191,13 +210,14 @@ void dispenseByWeight() {
       break;
     }
 
-    // --- SIMULATION LOGIC ---
-    // Add 2.5 grams of "food" every 200 milliseconds while the loop runs
-    if (millis() - lastSimDropTime > 200) {
-      simulatedBowlWeight += 2.5; 
-      currentWeight = simulatedBowlWeight;
-      lastSimDropTime = millis();
-      Serial.print("Simulated Bowl Weight: ");
+    // --- LOADCELL LOGIC ---
+    if (scale.is_ready()) {
+      currentWeight = scale.get_units(1); // Read raw weight value
+    }
+
+    if (millis() - lastPrintTime > 200) {
+      lastPrintTime = millis();
+      Serial.print("Current Bowl Weight: ");
       Serial.print(currentWeight);
       Serial.println("g");
     }
@@ -228,8 +248,9 @@ void dispenseByWeight() {
   Serial.println("Stop Servo Motor. Allowing scale to settle...");
   delay(1500); 
   
-  // Update last dispensed weight from simulation
-  lastDispensedWeight = simulatedBowlWeight;
+  // Update last dispensed weight
+  currentBowlWeight = currentWeight;
+  lastDispensedWeight = currentWeight;
 
   if (lastDispensedWeight >= (targetWeight - 2.0)) {
     lastDispenseSuccessful = true;
@@ -250,7 +271,7 @@ void sendTelemetry(int level) {
   doc["jammed"] = systemJammed; 
   doc["last_dispensed_g"] = lastDispensedWeight; 
   doc["dispense_success"] = lastDispenseSuccessful;
-  doc["bowl_weight"] = simulatedBowlWeight; // Send simulated weight to dashboard
+  doc["bowl_weight"] = currentBowlWeight; // Send actual weight to dashboard
 
   char buffer[256];
   serializeJson(doc, buffer);
