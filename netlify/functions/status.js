@@ -1,14 +1,22 @@
 "use strict";
-const { json, preflight, getMockSensorLogs } = require("./_data");
+const { json, preflight } = require("./_helpers");
+const { getFirestore } = require("./_firebase");
 
-/** GET /status — Returns the latest sensor reading */
+/** GET /status — Most recent sensor log */
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return preflight();
 
-  const logs = getMockSensorLogs();
-  const latest = logs.length
-    ? logs[logs.length - 1]
-    : { food_level: 72, jammed: false, last_dispensed_g: null, dispense_success: null };
+  const firestore = getFirestore();
+  if (!firestore) return json(500, { error: "Database unavailable" });
 
-  return json(200, latest);
+  try {
+    const snap = await firestore.collection("sensor_logs").orderBy("timestamp", "desc").limit(1).get();
+    if (!snap.empty) {
+      return json(200, snap.docs[0].data());
+    }
+    return json(200, { food_level: 0, jammed: false, last_dispensed_g: 0, dispense_success: null });
+  } catch (err) {
+    console.warn("[Firebase] Error fetching status:", err.message);
+    return json(500, { error: "Database error" });
+  }
 };

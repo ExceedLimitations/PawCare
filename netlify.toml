@@ -47,6 +47,11 @@
   to     = "/.netlify/functions/schedules-id?id=:id"
   status = 200
 
+[[redirects]]
+  from   = "/profile"
+  to     = "/.netlify/functions/profile"
+  status = 200
+
 # SPA fallback — serve index.html for any unmatched path
 [[redirects]]
   from   = "/*"

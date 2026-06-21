@@ -1,8 +1,35 @@
-node_modules/
+# ── Secrets & credentials ──────────────────────────────────────
 .env
+firebase-service-account.json
 pawfeed.json
-npm-debug.log*
 
-# Netlify
+# ── Dependencies ────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+
+# ── Build output ────────────────────────────────────────────────
+frontend/dist/
+frontend/.vite/
+
+# ── Logs ────────────────────────────────────────────────────────
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# ── Netlify ─────────────────────────────────────────────────────
 .netlify/
 netlify/functions/.cache/
+
+# ── OS files ────────────────────────────────────────────────────
+desktop.ini
+.DS_Store
+Thumbs.db
+
+# ── Editor ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln

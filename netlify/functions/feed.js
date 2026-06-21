@@ -1,5 +1,6 @@
 "use strict";
-const { json, preflight, getMockFeedings } = require("./_data");
+const { getFirestore } = require("./_firebase");
+const { json, preflight } = require("./_helpers");
 
 /** POST /feed — Trigger a dispense (publishes MQTT via HiveMQ public broker) */
 exports.handler = async (event) => {
@@ -18,7 +19,7 @@ exports.handler = async (event) => {
   // Publish via HiveMQ REST API (public broker — no auth needed for demo)
   // The ESP8266/ESP32 firmware subscribes to this topic.
   const MQTT_TOPIC_CMD =
-    process.env.MQTT_TOPIC_CMD || "pawfeed/karyl/command";
+    process.env.MQTT_TOPIC_CMD || "pawfeed/command";
   const MQTT_BROKER_REST =
     process.env.MQTT_BROKER_REST || "https://broker.hivemq.com:8884/mqtt";
 
@@ -47,6 +48,16 @@ exports.handler = async (event) => {
     portion_g: portion,
     type,
   };
+
+  const { getFirestore } = require("./_firebase");
+  const firestore = getFirestore();
+  if (firestore) {
+    try {
+      await firestore.collection("feedings").doc(record.id.toString()).set(record);
+    } catch (err) {
+      console.warn("[Firebase] Error saving feed from Netlify:", err.message);
+    }
+  }
 
   return json(200, { success: true, ...record });
 };
