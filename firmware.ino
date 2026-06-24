@@ -1,29 +1,31 @@
 #include <WiFi.h>
+#include <WiFiManager.h>          // tzapu/WiFiManager  — install via Library Manager
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
 #include "HX711.h"
+#include <Preferences.h>          // Built-in ESP32 NVS — stores custom params
 
 // =============================================================================
-//  NETWORK CONFIG  —  update these to match your environment
+//  MQTT CONFIG  —  stored in NVS, editable via the captive-portal config page
 // =============================================================================
-const char* ssid          = "wifi";
-const char* password      = "password";
+// Defaults used only on first boot (before any values are saved to flash)
+#define DEFAULT_MQTT_SERVER  "broker.hivemq.com"
+#define DEFAULT_MQTT_PORT    "1883"
+#define DEFAULT_MQTT_USER    "pawfeed/device01"  // used as topic prefix
 
-// MQTT broker: must match MQTT_BROKER in your server .env
-// If running the Node server locally use its LAN IP, e.g. "192.168.1.100"
-// If using the public HiveMQ broker keep "broker.hivemq.com"
-const char* mqtt_server   = "broker.hivemq.com";
-const int   mqtt_port     = 1883;
+char mqtt_server[64]  = DEFAULT_MQTT_SERVER;
+int  mqtt_port        = 1883;
+char topic_prefix[64] = DEFAULT_MQTT_USER;   // e.g. "pawfeed/device01"
 
-// ── MQTT Topics  (must match MQTT_TOPIC_* in server .env / server.js) ────────
-const char* TOPIC_SENSOR  = "pawfeed/karyl/sensor";   // firmware  → server
-const char* TOPIC_STATUS  = "pawfeed/karyl/status";   // firmware  → server (on connect)
-const char* TOPIC_CMD     = "pawfeed/karyl/command";  // server    → firmware
-const char* TOPIC_ALERTS  = "pawfeed/karyl/alerts";   // firmware  → server (alerts)
+// Topics built at runtime from topic_prefix
+char TOPIC_SENSOR[80];
+char TOPIC_STATUS[80];
+char TOPIC_CMD[80];
+char TOPIC_ALERTS[80];
 
 // Unique client-ID — avoids broker kick-outs if multiple devices share the broker
-const char* mqtt_client_id = "PawCareClient-karyl";
+const char* mqtt_client_id = "PawCareClient-device01";
 
 // =============================================================================
 //  PIN ASSIGNMENTS
@@ -35,7 +37,7 @@ const char* mqtt_client_id = "PawCareClient-karyl";
 #define BUZZER_PIN         4
 #define STATUS_LED_PIN     2
 #define ALERT_LED_PIN     15
-#define BUTTON_PIN        14   // manual dispense button
+#define BUTTON_PIN        14   // manual dispense button  /  hold on boot = WiFi reset
 #define LOADCELL_DOUT_PIN 21
 #define LOADCELL_SCK_PIN  22
 
@@ -67,6 +69,111 @@ WiFiClient   espClient;
 PubSubClient client(espClient);
 Servo        feederServo;
 HX711        scale;
+Preferences  prefs;
+
+// =============================================================================
+//  NVS HELPERS  —  persist custom MQTT settings across reboots
+// =============================================================================
+
+/** Load mqtt_server, mqtt_port, and topic_prefix from NVS flash. */
+void loadPreferences() {
+  prefs.begin("pawcare", true); // read-only namespace
+  String srv = prefs.getString("mqtt_srv", DEFAULT_MQTT_SERVER);
+  int    prt = prefs.getInt   ("mqtt_port", 1883);
+  String pfx = prefs.getString("topic_pfx", DEFAULT_MQTT_USER);
+  prefs.end();
+
+  srv.toCharArray(mqtt_server,  sizeof(mqtt_server));
+  mqtt_port = prt;
+  pfx.toCharArray(topic_prefix, sizeof(topic_prefix));
+}
+
+/** Save current mqtt_server, mqtt_port, and topic_prefix to NVS flash. */
+void savePreferences() {
+  prefs.begin("pawcare", false); // read-write
+  prefs.putString("mqtt_srv",  mqtt_server);
+  prefs.putInt   ("mqtt_port", mqtt_port);
+  prefs.putString("topic_pfx", topic_prefix);
+  prefs.end();
+}
+
+/** Build topic strings from the (possibly updated) topic_prefix. */
+void buildTopics() {
+  snprintf(TOPIC_SENSOR, sizeof(TOPIC_SENSOR), "%s/sensor",  topic_prefix);
+  snprintf(TOPIC_STATUS, sizeof(TOPIC_STATUS), "%s/status",  topic_prefix);
+  snprintf(TOPIC_CMD,    sizeof(TOPIC_CMD),    "%s/command", topic_prefix);
+  snprintf(TOPIC_ALERTS, sizeof(TOPIC_ALERTS), "%s/alerts",  topic_prefix);
+
+  Serial.printf("[MQTT] Topics: sensor=%s  cmd=%s\n", TOPIC_SENSOR, TOPIC_CMD);
+}
+
+// =============================================================================
+//  WIFI MANAGER SETUP
+// =============================================================================
+
+/**
+ * Start WiFiManager.
+ *
+ * On the captive-portal page the user can set:
+ *   • SSID / Password  (built into WiFiManager)
+ *   • MQTT Server
+ *   • MQTT Port
+ *   • Topic Prefix    (e.g.  pawfeed/device01)
+ *
+ * Credentials are saved by WiFiManager in its own flash region;
+ * our custom params are saved to NVS via savePreferences().
+ */
+void startWiFiManager(bool forceConfig = false) {
+  // Custom parameters shown in the captive-portal
+  WiFiManagerParameter p_mqtt_srv ("mqtt_server", "MQTT Server",      mqtt_server,  63);
+  WiFiManagerParameter p_mqtt_port("mqtt_port",   "MQTT Port",        DEFAULT_MQTT_PORT, 5);
+  WiFiManagerParameter p_topic_pfx("topic_pfx",   "Topic Prefix",     topic_prefix, 63);
+
+  WiFiManager wm;
+
+  // Optional: timeout the portal after 3 minutes of inactivity
+  wm.setConfigPortalTimeout(180);
+
+  // Blink status LED while the portal is open
+  wm.setAPCallback([](WiFiManager*) {
+    Serial.println("[WiFiManager] Config portal open. Connect to AP: PawCare-Setup");
+    // Fast blink to signal portal mode
+    for (int i = 0; i < 6; i++) {
+      digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
+      delay(150);
+    }
+  });
+
+  wm.addParameter(&p_mqtt_srv);
+  wm.addParameter(&p_mqtt_port);
+  wm.addParameter(&p_topic_pfx);
+
+  bool connected;
+  if (forceConfig) {
+    // Erase saved WiFi creds and reopen portal unconditionally
+    wm.resetSettings();
+    connected = wm.startConfigPortal("PawCare-Setup", "pawcare123");
+  } else {
+    // Try saved creds; open portal only if they fail
+    connected = wm.autoConnect("PawCare-Setup", "pawcare123");
+  }
+
+  if (!connected) {
+    Serial.println("[WiFi] Failed to connect — rebooting in 3s.");
+    delay(3000);
+    ESP.restart();
+  }
+
+  // Copy updated custom params back into our char arrays
+  strncpy(mqtt_server,  p_mqtt_srv.getValue(),  sizeof(mqtt_server)  - 1);
+  mqtt_port = atoi(p_mqtt_port.getValue());
+  strncpy(topic_prefix, p_topic_pfx.getValue(), sizeof(topic_prefix) - 1);
+
+  savePreferences(); // persist to NVS
+
+  Serial.printf("[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+  digitalWrite(STATUS_LED_PIN, HIGH);
+}
 
 // =============================================================================
 //  HELPERS
@@ -81,7 +188,6 @@ int getDistance() {
   digitalWrite(TRIG_PIN, LOW);
   
   // Read the echo pin, timeout after 30000 microseconds (30ms)
-  // This completely bypasses the need for an ISR
   long duration = pulseIn(ECHO_PIN, HIGH, 30000);
   
   if (duration > 0) {
@@ -130,7 +236,7 @@ void sendOnlineStatus() {
 }
 
 // =============================================================================
-//  DISPENSING (TIME-BASED ESTIMATION)
+//  DISPENSING (WEIGHT-BASED)
 // =============================================================================
 
 /**
@@ -321,23 +427,36 @@ void setup() {
   pinMode(TRIG_PIN,       OUTPUT);
   pinMode(ECHO_PIN,       INPUT);
 
-  // Wi-Fi
-  Serial.printf("[WiFi] Connecting to %s", ssid);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
-  }
-  digitalWrite(STATUS_LED_PIN, HIGH);
-  Serial.printf("\n[WiFi] Connected — IP: %s\n", WiFi.localIP().toString().c_str());
+  // ── Load saved MQTT settings from NVS ──────────────────────────────────────
+  loadPreferences();
 
-  // MQTT
+  // ── WiFi — hold BUTTON on boot for 3 s to force re-configuration ───────────
+  bool forcePortal = false;
+  Serial.println("[WiFi] Hold button now to enter WiFi setup mode...");
+  unsigned long holdStart = millis();
+  while (millis() - holdStart < 3000) {
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      forcePortal = true;
+      Serial.println("[WiFi] Button held — will open config portal.");
+      // Triple beep to confirm portal mode will start
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(BUZZER_PIN, HIGH); delay(80);
+        digitalWrite(BUZZER_PIN, LOW);  delay(80);
+      }
+      break;
+    }
+    delay(50);
+  }
+
+  startWiFiManager(forcePortal);
+  buildTopics();
+
+  // ── MQTT ───────────────────────────────────────────────────────────────────
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
   client.setKeepAlive(60);      // seconds — keeps connection alive
 
-  // Servo
+  // ── Servo ──────────────────────────────────────────────────────────────────
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
   ESP32PWM::allocateTimer(2);
@@ -346,7 +465,7 @@ void setup() {
   feederServo.attach(SERVO_PIN, 500, 2400);
   feederServo.write(0);
 
-  // Load Cell
+  // ── Load Cell ──────────────────────────────────────────────────────────────
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   scale.set_scale(calibration_factor);
   

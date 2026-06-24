@@ -35,9 +35,10 @@ try {
 /* ─────────────────────────── Config ─────────────────────────── */
 const PORT = process.env.PORT || 3000;
 const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://broker.hivemq.com:1883";
-const TOPIC_STATUS = process.env.MQTT_TOPIC_STATUS || "pawfeed/status";
-const TOPIC_SENSOR = process.env.MQTT_TOPIC_SENSOR || "pawfeed/sensor";
-const TOPIC_CMD = process.env.MQTT_TOPIC_CMD || "pawfeed/command";
+const TOPIC_STATUS = process.env.MQTT_TOPIC_STATUS || "pawfeed/device01/status";
+const TOPIC_SENSOR = process.env.MQTT_TOPIC_SENSOR || "pawfeed/device01/sensor";
+const TOPIC_CMD    = process.env.MQTT_TOPIC_CMD    || "pawfeed/device01/command";
+const TOPIC_ALERTS = process.env.MQTT_TOPIC_ALERTS || "pawfeed/device01/alerts";
 
 /* ─────────────────────────── Express ────────────────────────── */
 const app = express();
@@ -329,7 +330,8 @@ const mqttClient = mqtt.connect(MQTT_BROKER, {
 
 mqttClient.on("connect", () => {
   console.log(`[MQTT] Connected → ${MQTT_BROKER}`);
-  mqttClient.subscribe([TOPIC_STATUS, TOPIC_SENSOR], { qos: 1 });
+  console.log(`[MQTT] Topics: status=${TOPIC_STATUS} | sensor=${TOPIC_SENSOR} | cmd=${TOPIC_CMD} | alerts=${TOPIC_ALERTS}`);
+  mqttClient.subscribe([TOPIC_STATUS, TOPIC_SENSOR, TOPIC_ALERTS], { qos: 1 });
   io.emit("mqtt_status", { connected: true });
 });
 mqttClient.on("reconnect", () => io.emit("mqtt_status", { connected: false }));
@@ -344,6 +346,12 @@ mqttClient.on("message", async (topic, payload) => {
     data = JSON.parse(payload.toString());
   } catch {
     return console.warn("[MQTT] Bad JSON on", topic);
+  }
+
+  if (topic === TOPIC_ALERTS) {
+    console.log(`[MQTT] Alert from device: ${data.alert_message}`);
+    io.emit("alert", { level: "error", message: data.alert_message || "Device alert" });
+    return;
   }
 
   if (topic === TOPIC_STATUS || topic === TOPIC_SENSOR) {
