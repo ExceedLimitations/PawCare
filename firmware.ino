@@ -23,6 +23,7 @@ char TOPIC_SENSOR[80];
 char TOPIC_STATUS[80];
 char TOPIC_CMD[80];
 char TOPIC_ALERTS[80];
+char TOPIC_FEED_LOG[80];
 
 // Unique client-ID — avoids broker kick-outs if multiple devices share the broker
 const char* mqtt_client_id = "PawCareClient-device01";
@@ -103,6 +104,7 @@ void buildTopics() {
   snprintf(TOPIC_STATUS, sizeof(TOPIC_STATUS), "%s/status",  topic_prefix);
   snprintf(TOPIC_CMD,    sizeof(TOPIC_CMD),    "%s/command", topic_prefix);
   snprintf(TOPIC_ALERTS, sizeof(TOPIC_ALERTS), "%s/alerts",  topic_prefix);
+  snprintf(TOPIC_FEED_LOG, sizeof(TOPIC_FEED_LOG), "%s/feed_log", topic_prefix);
 
   Serial.printf("[MQTT] Topics: sensor=%s  cmd=%s\n", TOPIC_SENSOR, TOPIC_CMD);
 }
@@ -493,6 +495,15 @@ void loop() {
     Serial.println("[BTN] Manual dispense pressed.");
     targetWeight = 100; 
     triggerDashboardFeed = true; // Route the physical button to the same flag
+    
+    // Notify the backend immediately
+    StaticJsonDocument<128> doc;
+    doc["portion_g"] = targetWeight;
+    doc["type"] = "physical";
+    char buffer[128];
+    serializeJson(doc, buffer);
+    client.publish(TOPIC_FEED_LOG, buffer);
+    
     delay(200);
   }
   lastButtonState = currentButtonState;
@@ -597,9 +608,9 @@ void loop() {
     digitalWrite(BUZZER_PIN, LOW);
   }
 
-  // ── Periodic telemetry push (every 10 s) ───────────────────────────────────
+  // ── Periodic telemetry push (every 4 s) ───────────────────────────────────
   static unsigned long lastUpdate = 0;
-  if (millis() - lastUpdate > 10000) {
+  if (millis() - lastUpdate > 4000) {
     lastUpdate = millis();
     sendTelemetry(lastValidLevel);
   }

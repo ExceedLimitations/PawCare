@@ -328,7 +328,7 @@ export default function App() {
     setAlerts(p => p.filter(a => a.id !== id));
   };
 
-  const handleStatusUpdate = useCallback((newStatus) => {
+  const handleStatusUpdate = useCallback((newStatus, isLive = true) => {
     setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
     setStatus(prev => {
       const oldWeight = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
@@ -339,11 +339,13 @@ export default function App() {
       return { ...prev, ...newStatus };
     });
 
-    setDeviceConnected(true);
-    if (deviceTimeoutRef.current) clearTimeout(deviceTimeoutRef.current);
-    deviceTimeoutRef.current = setTimeout(() => {
-      setDeviceConnected(false);
-    }, 15000);
+    if (isLive) {
+      setDeviceConnected(true);
+      if (deviceTimeoutRef.current) clearTimeout(deviceTimeoutRef.current);
+      deviceTimeoutRef.current = setTimeout(() => {
+        setDeviceConnected(false);
+      }, 6000);
+    }
   }, []);
 
   const { connected, emit } = useSocket({
@@ -409,7 +411,7 @@ export default function App() {
           authFetch('/profile').then(r => r.json()),
         ]);
         if (s.status === 'fulfilled' && s.value && !s.value.error) {
-          handleStatusUpdate(s.value);
+          handleStatusUpdate(s.value, false);
         }
         if (today.status === 'fulfilled' && today.value && !today.value.error) setFeedingsToday(today.value.count || 0);
         if (sched.status === 'fulfilled' && Array.isArray(sched.value)) setSchedules(sched.value);

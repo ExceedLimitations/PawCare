@@ -39,6 +39,7 @@ const TOPIC_STATUS = process.env.MQTT_TOPIC_STATUS || "pawfeed/device01/status";
 const TOPIC_SENSOR = process.env.MQTT_TOPIC_SENSOR || "pawfeed/device01/sensor";
 const TOPIC_CMD    = process.env.MQTT_TOPIC_CMD    || "pawfeed/device01/command";
 const TOPIC_ALERTS = process.env.MQTT_TOPIC_ALERTS || "pawfeed/device01/alerts";
+const TOPIC_FEED_LOG = process.env.MQTT_TOPIC_FEED_LOG || "pawfeed/device01/feed_log";
 
 /* ─────────────────────────── Express ────────────────────────── */
 const app = express();
@@ -331,7 +332,7 @@ const mqttClient = mqtt.connect(MQTT_BROKER, {
 mqttClient.on("connect", () => {
   console.log(`[MQTT] Connected → ${MQTT_BROKER}`);
   console.log(`[MQTT] Topics: status=${TOPIC_STATUS} | sensor=${TOPIC_SENSOR} | cmd=${TOPIC_CMD} | alerts=${TOPIC_ALERTS}`);
-  mqttClient.subscribe([TOPIC_STATUS, TOPIC_SENSOR, TOPIC_ALERTS], { qos: 1 });
+  mqttClient.subscribe([TOPIC_STATUS, TOPIC_SENSOR, TOPIC_ALERTS, TOPIC_FEED_LOG], { qos: 1 });
   io.emit("mqtt_status", { connected: true });
 });
 mqttClient.on("reconnect", () => io.emit("mqtt_status", { connected: false }));
@@ -354,6 +355,23 @@ mqttClient.on("message", async (topic, payload) => {
     return;
   }
 
+  if (topic === TOPIC_FEED_LOG) {
+    const record = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      portion_g: data.portion_g || 100,
+      type: data.type || "physical",
+    };
+    try {
+      await firestoreDb.collection("feedings").doc(record.id.toString()).set(record);
+      io.emit("feeding_done", record);
+      console.log(`[Feed] ${record.portion_g}g (${record.type})`);
+    } catch (err) {
+      console.error("[Firebase] Error saving physical feed:", err.message);
+    }
+    return;
+  }
+
   if (topic === TOPIC_STATUS || topic === TOPIC_SENSOR) {
     const entry = {
       id: Date.now(),
@@ -371,13 +389,6 @@ mqttClient.on("message", async (topic, payload) => {
     }
 
     io.emit("status", entry);
-    if (data.jammed)
-      io.emit("alert", { level: "error", message: "Mechanical jam detected!" });
-    if ((data.food_level ?? 100) < 20)
-      io.emit("alert", {
-        level: "warn",
-        message: `Food level critical: ${data.food_level}%`,
-      });
   }
 });
 
