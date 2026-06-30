@@ -331,7 +331,11 @@ export default function App() {
   };
 
   const handleStatusUpdate = useCallback((newStatus, isLive = true) => {
-    setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+    if (newStatus.timestamp) {
+      setLastSyncTime(new Date(newStatus.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+    } else {
+      setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+    }
     setStatus(prev => {
       const oldWeight = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
       const currentWeight = newStatus.bowl_weight ?? newStatus.last_dispensed_g ?? 0;
