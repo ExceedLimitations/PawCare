@@ -98,11 +98,13 @@ app.get("/profile", authenticate, async (_req, res) => {
 });
 
 app.post("/profile", authenticate, async (req, res) => {
-  const { name, breed, avatar } = req.body;
+  const { name, breed, avatar, birthday, age } = req.body;
   const profile = {
-    name:  (name  || "").trim() || "Bantay",
-    breed: (breed || "").trim() || "Golden Retriever",
-    avatar: avatar || null,
+    name:     (name  || "").trim() || "Unnamed Pet",
+    breed:    (breed || "").trim() || "",
+    avatar:   avatar   || null,
+    birthday: birthday || null,
+    age:      age != null && age !== '' ? Number(age) : null,
   };
   try {
     await firestoreDb.collection("config").doc("profile").set(profile);
@@ -173,6 +175,48 @@ app.get("/feedings/weekly", authenticate, async (_req, res) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
+app.get("/feedings/monthly", authenticate, async (_req, res) => {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 29);
+  cutoff.setHours(0, 0, 0, 0);
+
+  try {
+    const snap = await firestoreDb.collection("feedings").where("timestamp", ">=", cutoff.toISOString()).get();
+    const result = {};
+    snap.forEach(doc => {
+      const f = doc.data();
+      const day = f.timestamp.slice(0, 10);
+      if (!result[day]) result[day] = { day, count: 0, total_g: 0 };
+      result[day].count++;
+      result[day].total_g += f.portion_g;
+    });
+    return res.json(Object.values(result).sort((a, b) => a.day.localeCompare(b.day)));
+  } catch (err) {
+    console.error("[Firebase] Error fetching monthly feedings:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.get("/feedings/daily", authenticate, async (_req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const snap = await firestoreDb.collection("feedings").where("timestamp", ">=", today).get();
+    const result = {};
+    snap.forEach(doc => {
+      const f = doc.data();
+      const hour = f.timestamp.slice(11, 13); // "HH"
+      if (!result[hour]) result[hour] = { hour, count: 0, total_g: 0 };
+      result[hour].count++;
+      result[hour].total_g += f.portion_g;
+    });
+    return res.json(Object.values(result).sort((a, b) => a.hour.localeCompare(b.hour)));
+  } catch (err) {
+    console.error("[Firebase] Error fetching daily feedings:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 
 app.get("/feedings/recent", authenticate, async (_req, res) => {
   try {
@@ -393,17 +437,33 @@ mqttClient.on("message", async (topic, payload) => {
 });
 
 /* ─────────────────────────── Schedule runner ────────────────── */
+// Track which schedule IDs have already fired in the current minute
+// so we never double-fire even if the interval ticks twice in the same minute.
+const firedThisMinute = new Set();
+let lastFiredMinute = "";
+
 setInterval(async () => {
+  // Compute current time in UTC+8 (Asia/Manila / Asia/Singapore)
   const now = new Date();
-  const hhmm = now.toTimeString().slice(0, 5);
-  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+  const localTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  const hhmm = localTime.toISOString().slice(11, 16); // "HH:MM"
+  const dayOfWeek = localTime.getUTCDay(); // 0=Sun, 6=Sat
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+  // Reset the fired-this-minute tracker when the minute rolls over
+  if (hhmm !== lastFiredMinute) {
+    firedThisMinute.clear();
+    lastFiredMinute = hhmm;
+  }
 
   let schedules = [];
   try {
     const snapshot = await firestoreDb.collection("schedules").get();
     snapshot.forEach(doc => {
       const s = { id: doc.id, ...doc.data() };
-      if (s.enabled && s.time === hhmm) schedules.push(s);
+      if (s.enabled && s.time === hhmm && !firedThisMinute.has(doc.id)) {
+        schedules.push(s);
+      }
     });
   } catch (err) {
     console.error("[Firebase] Error running schedules from Firebase:", err.message);
@@ -412,6 +472,9 @@ setInterval(async () => {
   for (const s of schedules) {
     if (s.days === "weekdays" && isWeekend) continue;
     if (s.days === "weekends" && !isWeekend) continue;
+
+    firedThisMinute.add(s.id); // Mark as fired so it won't repeat this minute
+
     mqttClient.publish(
       TOPIC_CMD,
       JSON.stringify({ action: "feed", portion_g: s.portion_g }),
@@ -427,12 +490,12 @@ setInterval(async () => {
     try {
       await firestoreDb.collection("feedings").doc(record.id.toString()).set(record);
       io.emit("feeding_done", record);
-      console.log(`[Schedule] "${s.label}" fired — ${s.portion_g}g`);
+      console.log(`[Schedule] "${s.label}" fired at ${hhmm} (UTC+8) — ${s.portion_g}g`);
     } catch (err) {
       console.error("[Firebase] Error saving scheduled feed:", err.message);
     }
   }
-}, 60_000);
+}, 30_000); // Check every 30 s so we never miss a 1-minute window
 
 /* ─────────────────────────── Start ──────────────────────────── */
 server.listen(PORT, () => {
