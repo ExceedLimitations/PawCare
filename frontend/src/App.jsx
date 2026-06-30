@@ -287,7 +287,7 @@ export default function App() {
       return res;
     });
   }, []);
-  const [profile, setProfile] = useState({ name: 'Bantay', breed: 'Golden Retriever' });
+  const [profile, setProfile] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editProfile, setEditProfile] = useState({ name: '', breed: '' });
   const [status, setStatus] = useState({ food_level: 0, jammed: false, last_dispensed_g: 0, bowl_weight: 0, dispense_success: null });
@@ -296,6 +296,8 @@ export default function App() {
   const [schedules, setSchedules] = useState([]);
   const [recentFeedings, setRecentFeedings] = useState([]);
   const [weeklyFeedings, setWeeklyFeedings] = useState([]);
+  const [chartPeriod, setChartPeriod] = useState('week');
+  const [chartFeedings, setChartFeedings] = useState([]);
   const [feeding, setFeeding] = useState(false);
   const [dispenseSuccess, setDispenseSuccess] = useState(false);
   const [alerts, setAlerts] = useState([]);
@@ -556,15 +558,34 @@ export default function App() {
     }
   };
 
+  const fetchChartData = useCallback(async (period) => {
+    const endpoint = period === 'day' ? '/feedings/daily' : period === 'month' ? '/feedings/monthly' : '/feedings/weekly';
+    try {
+      const res = await authFetch(endpoint);
+      const data = await res.json();
+      if (Array.isArray(data)) setChartFeedings(data);
+    } catch (err) {
+      console.warn('Chart fetch failed:', err);
+    }
+  }, [authFetch]);
+
+  useEffect(() => {
+    fetchChartData(chartPeriod);
+  }, [chartPeriod, fetchChartData]);
+
   const chartData = {
-    labels: weeklyFeedings.map(f => f.day.slice(5)), // Extract MM-DD
+    labels: chartFeedings.map(f => {
+      if (f.hour !== undefined) return `${f.hour}:00`;
+      if (f.day !== undefined) return f.day.slice(5); // MM-DD
+      return '';
+    }),
     datasets: [
       {
         label: 'Dispensed (g)',
-        data: weeklyFeedings.map(f => f.total_g),
+        data: chartFeedings.map(f => f.total_g),
         backgroundColor: '#10B981',
         borderRadius: 4,
-        barThickness: 24,
+        barThickness: chartPeriod === 'month' ? 10 : 24,
       }
     ]
   };
@@ -576,24 +597,38 @@ export default function App() {
       legend: { display: false },
       tooltip: {
         backgroundColor: '#0F172A',
-        titleFont: { family: 'Inter', size: 13 },
-        bodyFont: { family: 'JetBrains Mono', size: 12 },
+        titleFont: { family: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", size: 13 },
+        bodyFont: { family: "'JetBrains Mono', monospace", size: 12 },
         padding: 12,
         cornerRadius: 8,
         displayColors: false,
       }
     },
     scales: {
-      x: { 
-        grid: { display: false }, 
-        ticks: { font: { family: 'Inter', size: 11 }, color: '#64748B' },
-        border: { display: false }
+      x: {
+        grid: { display: false },
+        ticks: { font: { family: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", size: 11 }, color: '#64748B' },
+        border: { display: false },
+        title: {
+          display: true,
+          text: chartPeriod === 'day' ? 'Time of Day' : 'Date',
+          color: '#94A3B8',
+          font: { family: "'JetBrains Mono', monospace", size: 11, weight: '500' },
+          padding: { top: 8 },
+        }
       },
-      y: { 
-        border: { display: false }, 
-        grid: { color: '#E2E8F0', drawTicks: false }, 
-        ticks: { font: { family: 'JetBrains Mono', size: 11 }, color: '#64748B', stepSize: 50 },
-        beginAtZero: true
+      y: {
+        border: { display: false },
+        grid: { color: '#E2E8F0', drawTicks: false },
+        ticks: { font: { family: "'JetBrains Mono', monospace", size: 11 }, color: '#64748B', stepSize: 50 },
+        beginAtZero: true,
+        title: {
+          display: true,
+          text: 'Food Dispensed (g)',
+          color: '#94A3B8',
+          font: { family: "'JetBrains Mono', monospace", size: 11, weight: '500' },
+          padding: { bottom: 8 },
+        }
       }
     }
   };
@@ -651,16 +686,26 @@ export default function App() {
         <section className="left-column">
           
           <div className="tactile-card profile-card-enhanced" style={{ position: 'relative' }}>
-            <div className="profile-avatar">
-              <img src={profile.avatar || petAvatar} alt="Pet Avatar" />
+            <div className={`profile-avatar${profile ? '' : ' skeleton'}`}>
+              {profile && <img src={profile.avatar || petAvatar} alt="Pet Avatar" />}
             </div>
             <div className="profile-card-info">
-              <h2 className="profile-name">{profile.name || 'Bantay'}</h2>
-              <span className="profile-subtitle">{profile.breed || 'Golden Retriever'}</span>
+              <h2 className="profile-name">{profile ? (profile.name || 'Unnamed Pet') : 'Loading...'}</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
+                <span className="profile-subtitle">
+                  {profile ? (profile.breed || 'Breed not set') : 'Fetching profile...'}
+                </span>
+                <span className="profile-subtitle">
+                  {profile ? (profile.age != null ? (profile.age + (profile.age !== 1 ? ' years old' : ' year old')) : 'Age not set') : 'Loading...'}
+                </span>
+                <span className="profile-subtitle">
+                  {profile ? (profile.birthday ? ('Born ' + new Date(profile.birthday).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) : 'No birthday set') : 'Loading...'}
+                </span>
+              </div>
             </div>
             <button 
               onClick={() => {
-                setEditProfile({ name: profile.name || 'Bantay', breed: profile.breed || 'Golden Retriever', avatar: profile.avatar || null });
+                setEditProfile({ name: profile?.name || '', breed: profile?.breed || '', birthday: profile?.birthday || '', age: profile?.age ?? '', avatar: profile?.avatar || null });
                 setShowProfileModal(true);
               }}
               style={{ position: 'absolute', right: '20px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-light)' }}
@@ -789,16 +834,44 @@ export default function App() {
         {/* Middle Column — Charts & Schedules */}
         <section className="main-column">
           <div className="tactile-card">
-            <div className="card-header">
-              <BarChart3 size={18} />
-              <span className="label-caps">7-DAY FEEDING VOLUME</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div className="card-header" style={{ marginBottom: 0 }}>
+                <BarChart3 size={18} />
+                <span className="label-caps">
+                  {chartPeriod === 'day' ? 'TODAY\'S FEEDING VOLUME' : chartPeriod === 'month' ? '30-DAY FEEDING VOLUME' : '7-DAY FEEDING VOLUME'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {['day', 'week', 'month'].map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setChartPeriod(p)}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      borderRadius: '6px',
+                      border: '1px solid',
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      transition: 'all 0.15s',
+                      backgroundColor: chartPeriod === p ? 'var(--text-main)' : 'transparent',
+                      color: chartPeriod === p ? 'white' : 'var(--text-muted)',
+                      borderColor: chartPeriod === p ? 'var(--text-main)' : 'var(--border-dark)',
+                    }}
+                  >
+                    {p === 'day' ? 'Day' : p === 'week' ? 'Week' : 'Month'}
+                  </button>
+                ))}
+              </div>
             </div>
             <div style={{ height: '260px', width: '100%', position: 'relative' }}>
-              {weeklyFeedings.length > 0 ? (
-                <Bar data={chartData} options={chartOptions} />
+              {chartFeedings.length > 0 ? (
+                <Bar key={chartPeriod} data={chartData} options={chartOptions} />
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }} className="font-mono">
-                  Loading telemetry...
+                  No data for this period
                 </div>
               )}
             </div>
@@ -963,7 +1036,7 @@ export default function App() {
             
             <div className="form-group" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '24px' }}>
               <div style={{ position: 'relative', width: '100px', height: '100px', borderRadius: '50%', overflow: 'hidden', border: '3px solid var(--border)', marginBottom: '12px' }}>
-                <img src={editProfile.avatar || profile.avatar || petAvatar} alt="Avatar Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img src={editProfile.avatar || profile?.avatar || petAvatar} alt="Avatar Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 <label style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', color: 'white', fontSize: '0.7rem', textAlign: 'center', padding: '4px 0', cursor: 'pointer', fontWeight: 600 }}>
                   CHANGE
                   <input type="file" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
@@ -992,6 +1065,34 @@ export default function App() {
                 onChange={e => setEditProfile({ ...editProfile, breed: e.target.value })} 
                 placeholder="e.g. Golden Retriever" 
               />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Age (years)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="30"
+                  className="form-input"
+                  value={editProfile.age ?? ''}
+                  onChange={e => setEditProfile({ ...editProfile, age: e.target.value === '' ? '' : Number(e.target.value) })}
+                  placeholder="e.g. 2"
+                />
+              </div>
+              <div className="form-group" style={{ flex: 2 }}>
+                <label className="form-label">Birthday</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={editProfile.birthday || ''}
+                  onChange={e => {
+                    const bd = e.target.value;
+                    const autoAge = bd ? Math.floor((Date.now() - new Date(bd)) / (365.25 * 86400000)) : '';
+                    setEditProfile({ ...editProfile, birthday: bd, age: autoAge });
+                  }}
+                />
+              </div>
             </div>
             
             <div className="modal-footer">
