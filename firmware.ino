@@ -47,7 +47,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // =============================================================================
 #define IR_JAM_STATE      LOW
 
-float calibration_factor     = 399.0; // Official calibration factor
+float calibration_factor     = 418.95; // Official calibration factor
 int   targetWeight           = 100;   // grams — overridden by portion_g from dashboard
 const int   emptyThreshold   = 10;    // % level below which hopper is "empty"
 const int   jamTimeout       = 1500;  // ms IR blocked before jam is declared
@@ -534,7 +534,7 @@ void loop() {
   static bool sensorAlerted = false;
 
   if (dist > 0 && dist < 200) {
-    lastValidLevel = constrain(map(dist, 2, 20, 100, 0), 0, 100);
+    lastValidLevel = constrain(map(dist, 2, 9, 100, 0), 0, 100);
     sensorFailCount = 0;
     sensorAlerted = false;
   } else {
