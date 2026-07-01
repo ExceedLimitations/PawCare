@@ -148,10 +148,23 @@ app.post("/feed", authenticate, feedLimiter, async (req, res) => {
   }
 });
 
+const getLocalCutoffISO = (daysBack = 0) => {
+  const now = new Date();
+  const localTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  localTime.setUTCDate(localTime.getUTCDate() - daysBack);
+  localTime.setUTCHours(0, 0, 0, 0);
+  const utcCutoff = new Date(localTime.getTime() - (8 * 60 * 60 * 1000));
+  return utcCutoff.toISOString();
+};
+
+const getLocalISO = (isoString) => {
+  return new Date(isoString).toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace(' ', 'T');
+};
+
 app.get("/feedings/today", authenticate, async (_req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const todayCutoff = getLocalCutoffISO(0);
   try {
-    const snap = await firestoreDb.collection("feedings").where("timestamp", ">=", today).get();
+    const snap = await firestoreDb.collection("feedings").where("timestamp", ">=", todayCutoff).get();
     let count = 0;
     let total_g = 0;
     snap.forEach(doc => { count++; total_g += doc.data().portion_g; });
@@ -163,12 +176,10 @@ app.get("/feedings/today", authenticate, async (_req, res) => {
 });
 
 async function aggregateFeedings(res, daysBack, keyFn, sortFn) {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - daysBack);
-  cutoff.setHours(0, 0, 0, 0);
+  const cutoffIso = getLocalCutoffISO(daysBack);
 
   try {
-    const snap = await firestoreDb.collection("feedings").where("timestamp", ">=", cutoff.toISOString()).get();
+    const snap = await firestoreDb.collection("feedings").where("timestamp", ">=", cutoffIso).get();
     const result = {};
     snap.forEach(doc => {
       const f = doc.data();
@@ -186,7 +197,7 @@ async function aggregateFeedings(res, daysBack, keyFn, sortFn) {
 }
 
 app.get("/feedings/weekly", authenticate, async (_req, res) => {
-  const keyFn = (f) => f.timestamp.slice(0, 10);
+  const keyFn = (f) => getLocalISO(f.timestamp).slice(0, 10);
   const sortFn = (a, b) => a.key.localeCompare(b.key);
   const data = await aggregateFeedings(res, 6, keyFn, sortFn);
   if (data) {
@@ -196,7 +207,7 @@ app.get("/feedings/weekly", authenticate, async (_req, res) => {
 });
 
 app.get("/feedings/monthly", authenticate, async (_req, res) => {
-  const keyFn = (f) => f.timestamp.slice(0, 10);
+  const keyFn = (f) => getLocalISO(f.timestamp).slice(0, 10);
   const sortFn = (a, b) => a.key.localeCompare(b.key);
   const data = await aggregateFeedings(res, 29, keyFn, sortFn);
   if (data) {
@@ -206,7 +217,7 @@ app.get("/feedings/monthly", authenticate, async (_req, res) => {
 });
 
 app.get("/feedings/daily", authenticate, async (_req, res) => {
-  const keyFn = (f) => f.timestamp.slice(11, 13);
+  const keyFn = (f) => getLocalISO(f.timestamp).slice(11, 13);
   const sortFn = (a, b) => a.key.localeCompare(b.key);
   const data = await aggregateFeedings(res, 0, keyFn, sortFn);
   if (data) {

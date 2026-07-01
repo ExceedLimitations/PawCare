@@ -262,7 +262,7 @@ void dispenseByWeight() {
   }
   float targetAbsoluteWeight = startingWeight + targetWeight;
 
-  feederServo.write(180);
+  feederServo.write(90);
 
   float         currentWeight      = startingWeight;
   unsigned long irBlockStartTime   = 0;
@@ -289,7 +289,7 @@ void dispenseByWeight() {
         Serial.println("[JAM] Anti-jam sequence triggered.");
         feederServo.write(0);
         delay(1000);
-        feederServo.write(180);
+        feederServo.write(90);
         delay(1000);
         
         if (digitalRead(IR_PIN) == IR_JAM_STATE) {
