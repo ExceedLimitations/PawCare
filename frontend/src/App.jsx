@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { CheckCircle, Loader2, Activity, BarChart3, Clock, CalendarDays, History, Settings2, Lock, User, Bell, Cpu, Wifi, Eye, Scale } from 'lucide-react';
 import { useSocket } from './hooks/useSocket';
 import petAvatar from './assets/pet_avatar.png';
@@ -74,13 +74,20 @@ const BowlSVG = ({ weight }) => {
   );
 };
 
-// Horizontal Timeline Component
-const FeedingTimeline = ({ schedules, recentFeedings, currentTime, onManageSchedules }) => {
+const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
   const getTimelinePosition = (timeStr) => {
     if (!timeStr) return 0;
     const [h, m] = timeStr.split(':').map(Number);
     return ((h * 60 + m) / 1440) * 100;
   };
+
+  const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   const [hNow, mNow] = currentTime.split(':').map(Number);
   const currentMinutes = hNow * 60 + mNow;
@@ -269,6 +276,17 @@ const Login = ({ onLogin }) => {
   );
 };
 
+const ClockDisplay = () => {
+  const [time, setTime] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span className="font-mono">{time}</span>;
+};
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return !!localStorage.getItem('pawcare_auth');
@@ -304,7 +322,6 @@ export default function App() {
   const [weightDelta, setWeightDelta] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newSchedule, setNewSchedule] = useState({ label: '', time: '08:00', portion_g: 100 });
-  const [currentTime, setCurrentTime] = useState('12:00');
   const [lastSyncTime, setLastSyncTime] = useState('—');
   const [deviceConnected, setDeviceConnected] = useState(false);
   const [manualPortion, setManualPortion] = useState(100);
@@ -331,6 +348,12 @@ export default function App() {
   };
 
   const handleStatusUpdate = useCallback((newStatus, isLive = true) => {
+    if (newStatus.online === false) {
+      setDeviceConnected(false);
+      if (deviceTimeoutRef.current) clearTimeout(deviceTimeoutRef.current);
+      return;
+    }
+
     if (newStatus.timestamp) {
       setLastSyncTime(new Date(newStatus.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
     } else {
@@ -350,7 +373,7 @@ export default function App() {
       if (deviceTimeoutRef.current) clearTimeout(deviceTimeoutRef.current);
       deviceTimeoutRef.current = setTimeout(() => {
         setDeviceConnected(false);
-      }, 6000);
+      }, 15000);
     }
   }, []);
 
@@ -406,6 +429,8 @@ export default function App() {
   }, [status.food_level, addAlert, addLog]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     const init = async () => {
       try {
         const [s, today, sched, recent, weekly, prof] = await Promise.allSettled([
@@ -441,13 +466,7 @@ export default function App() {
     };
     init();
 
-    const timer = setInterval(() => {
-      const d = new Date();
-      setCurrentTime(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [handleStatusUpdate]);
+  }, [handleStatusUpdate, isAuthenticated]);
 
   const triggerManualDispense = () => {
     if (feeding) return;
@@ -575,9 +594,9 @@ export default function App() {
 
   useEffect(() => {
     fetchChartData(chartPeriod);
-  }, [chartPeriod, fetchChartData]);
+  }, [chartPeriod, fetchChartData, recentFeedings]);
 
-  const chartData = {
+  const chartData = useMemo(() => ({
     labels: chartFeedings.map(f => {
       if (f.hour !== undefined) return `${f.hour}:00`;
       if (f.day !== undefined) return f.day.slice(5); // MM-DD
@@ -592,9 +611,9 @@ export default function App() {
         barThickness: chartPeriod === 'month' ? 10 : 24,
       }
     ]
-  };
+  }), [chartFeedings, chartPeriod]);
 
-  const chartOptions = {
+  const chartOptions = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -635,7 +654,7 @@ export default function App() {
         }
       }
     }
-  };
+  }), [chartPeriod]);
 
   const handleLogout = () => {
     localStorage.removeItem('pawcare_auth');
@@ -670,7 +689,7 @@ export default function App() {
         <div className="nav-info">
           <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>Welcome, Admin</span>
           <span className="nav-divider">|</span>
-          <span className="font-mono">{currentTime}</span>
+          <ClockDisplay />
           <span className="nav-divider">|</span>
           <span className="font-mono">SYNC: {lastSyncTime}</span>
           <span className="nav-divider">|</span>
@@ -884,7 +903,6 @@ export default function App() {
           <FeedingTimeline 
             schedules={schedules} 
             recentFeedings={recentFeedings}
-            currentTime={currentTime}
             onManageSchedules={handleAddScheduleClick}
           />
 

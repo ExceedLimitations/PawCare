@@ -383,35 +383,43 @@ void callback(char* topic, byte* payload, unsigned int length) {
 // =============================================================================
 //  MQTT RECONNECT
 // =============================================================================
-void reconnect() {
-  int attempts = 0;
-  while (!client.connected()) {
-    Serial.print("[MQTT] Connecting...");
-    // Use a unique client-id to avoid broker kicking stale sessions
-    String cid = String(mqtt_client_id) + "-" + String(millis());
-    if (client.connect(cid.c_str())) {
-      Serial.println(" connected.");
-      client.subscribe(TOPIC_CMD, 1);   // QoS 1 — at-least-once delivery
-      sendOnlineStatus();               // tell dashboard we are live
+unsigned long lastReconnectAttempt = 0;
+int reconnectAttempts = 0;
 
-      // Double beep on successful connection
+void reconnect() {
+  if (client.connected()) return;
+
+  if (millis() - lastReconnectAttempt > 5000) {
+    lastReconnectAttempt = millis();
+    Serial.print("[MQTT] Connecting...");
+    String cid = String(mqtt_client_id) + "-" + String(millis());
+    
+    // Set LWT (Last Will and Testament)
+    if (client.connect(cid.c_str(), TOPIC_STATUS, 1, true, "{\"online\":false}")) {
+      Serial.println(" connected.");
+      client.subscribe(TOPIC_CMD, 1);
+      sendOnlineStatus();
+      reconnectAttempts = 0;
+
       digitalWrite(BUZZER_PIN, HIGH); delay(100);
       digitalWrite(BUZZER_PIN, LOW);  delay(100);
       digitalWrite(BUZZER_PIN, HIGH); delay(100);
       digitalWrite(BUZZER_PIN, LOW);
     } else {
       Serial.printf(" failed (rc=%d). Retry in 5s\n", client.state());
-      // Blink status LED while waiting
-      for (int i = 0; i < 10; i++) {
-        digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
-        delay(500);
-      }
-      attempts++;
-      if (attempts >= 5) {
+      reconnectAttempts++;
+      if (reconnectAttempts >= 5) {
         Serial.println("[MQTT] Too many failures — rebooting.");
         ESP.restart();
       }
     }
+  }
+
+  // Blink status LED while waiting
+  static unsigned long lastBlink = 0;
+  if (millis() - lastBlink > 500) {
+    lastBlink = millis();
+    digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
   }
 }
 
@@ -485,7 +493,11 @@ void setup() {
 // =============================================================================
 void loop() {
   // ── MQTT keepalive ──────────────────────────────────────────────────────────
-  if (!client.connected()) reconnect();
+  if (!client.connected()) {
+    reconnect();
+  } else {
+    digitalWrite(STATUS_LED_PIN, HIGH); // Solid when connected
+  }
   client.loop();
 
   // ── Manual dispense button (with debounce) ──────────────────────────────────
@@ -580,13 +592,21 @@ void loop() {
 
   // ── Update Load Cell Reading ────────────────────────────────────────────────
   if (scale.is_ready()) {
-    float rawWeight = scale.get_units(5); // Read accurate weight, averaged over 5 readings
+    // 1 sample + manual rolling average to avoid blocking loop
+    static float weightSamples[5] = {0,0,0,0,0};
+    static int sampleIndex = 0;
+    weightSamples[sampleIndex] = scale.get_units(1);
+    sampleIndex = (sampleIndex + 1) % 5;
+    
+    float rawWeight = 0;
+    for(int i=0; i<5; i++) rawWeight += weightSamples[i];
+    rawWeight /= 5.0;
     
     // Auto-Zero Tracking (AZT)
     float adjustedWeight = rawWeight - driftOffset;
     
-    // If the weight is between -3g and +3g, it's likely just drift/crumbs
-    if (abs(adjustedWeight) < 3.0) {
+    // If the weight is between -5g and +5g, it's likely just drift/crumbs
+    if (abs(adjustedWeight) < 5.0) {
       // Slowly pull the offset towards the raw weight to absorb the drift
       driftOffset += adjustedWeight * 0.1;
       currentBowlWeight = 0.0; // Snap to 0 for telemetry
