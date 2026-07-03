@@ -671,11 +671,13 @@ export default function App() {
       <header className="navbar">
         {/* Left — Brand */}
         <div className="nav-brand">
-          <div className="brand-icon">
-            <CatPawIcon size={20} color="white" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="brand-icon">
+              <CatPawIcon size={20} color="white" />
+            </div>
+            <span className="brand-text font-serif">PawCare Platform</span>
           </div>
-          <span className="brand-text font-serif">PawCare Platform</span>
-          <div style={{ marginLeft: '16px' }} className={`status-badge ${connected && deviceConnected ? 'online' : 'offline'}`}>
+          <div className={`status-badge ${connected && deviceConnected ? 'online' : 'offline'}`}>
             <span className="status-dot"></span>
             {connected && deviceConnected ? 'System Online' : 'System Offline'}
           </div>

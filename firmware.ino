@@ -269,15 +269,38 @@ void dispenseByWeight() {
   unsigned long dispenseStartTime  = millis();
   bool          isIrBlocked        = false;
 
-  while (currentWeight < targetAbsoluteWeight) {
-    // Hard timeout — prevents infinite loop
-    if (millis() - dispenseStartTime > 15000) {
+  while (true) {
+    float remaining = targetAbsoluteWeight - currentWeight;
+
+    // 1. In-Flight Compensation (stop 3g early)
+    if (remaining <= 3.0) {
+      Serial.println("[Dispense] Target reached (including in-flight offset).");
+      break;
+    }
+
+    // Hard timeout — increased to 25s to allow for the slower trickle-feed phase
+    if (millis() - dispenseStartTime > 25000) {
       Serial.println("[Dispense] TIMEOUT — stopping.");
       break;
     }
 
     if (scale.is_ready()) {
       currentWeight = scale.get_units(1) - driftOffset; // Read current weight
+    }
+
+    // 2. Trickle Feed & Spike Filtering
+    if (remaining > 12.0) {
+      // Full speed phase
+      feederServo.write(70);
+    } else {
+      // Trickle phase: pulse the servo to drop small amounts without overshooting
+      // 150ms open, 350ms closed
+      unsigned long cycle = (millis() - dispenseStartTime) % 500;
+      if (cycle < 150) {
+        feederServo.write(70);
+      } else {
+        feederServo.write(0);
+      }
     }
 
     // Jam detection
@@ -532,8 +555,20 @@ void loop() {
   int dist = getDistance();
   static int sensorFailCount = 0;
   static bool sensorAlerted = false;
+  static int lastValidDist = 9; // Assume empty on boot
 
-  if (dist > 0 && dist < 200) {
+  if (dist == 0) {
+    // 0 means timeout. This happens EITHER when completely empty (sound scatters)
+    // OR when completely full (kibble touching mesh). We use history to guess:
+    if (lastValidDist <= 4) {
+      lastValidLevel = 100; // Was mostly full, so it's touching the mesh
+    } else {
+      lastValidLevel = 0;   // Was mostly empty, so it's scattering
+    }
+    sensorFailCount = 0;
+    sensorAlerted = false;
+  } else if (dist > 0 && dist < 200) {
+    lastValidDist = dist;
     lastValidLevel = constrain(map(dist, 2, 9, 100, 0), 0, 100);
     sensorFailCount = 0;
     sensorAlerted = false;
@@ -541,7 +576,7 @@ void loop() {
     sensorFailCount++;
     if (sensorFailCount >= 15 && !sensorAlerted) {
       lastValidLevel = 0;
-      triggerFlowchartAlert("SENSOR FAULT: Ultrasonic Sensor Not Connected.");
+      triggerFlowchartAlert("SENSOR FAULT: Ultrasonic Sensor Error.");
       sensorAlerted = true;
     }
     if (sensorFailCount > 1000) sensorFailCount = 15; // prevent overflow
@@ -549,14 +584,24 @@ void loop() {
 
   // ── State machine / alerts ──────────────────────────────────────────────────
   static bool stateAlerted = false;
+  static unsigned long emptyStartTime = 0;
+  static unsigned long fullStartTime = 0;
 
   if (lastValidLevel < emptyThreshold) {
-    if (!stateAlerted && !sensorAlerted) {
-      triggerFlowchartAlert("ABORT: Hopper is empty. Send Refill Alert.");
-      stateAlerted = true;
+    fullStartTime = 0;
+    if (emptyStartTime == 0) emptyStartTime = millis();
+    else if (millis() - emptyStartTime > 5000) {
+      if (!stateAlerted && !sensorAlerted) {
+        triggerFlowchartAlert("ABORT: Hopper is empty. Send Refill Alert.");
+        stateAlerted = true;
+      }
     }
   } else {
-    stateAlerted = false;
+    emptyStartTime = 0;
+    if (fullStartTime == 0) fullStartTime = millis();
+    else if (millis() - fullStartTime > 5000) {
+      stateAlerted = false;
+    }
     // Note: Autonomous feeding based on bowl empty state has been disabled 
     // because the load cell was removed. It now relies purely on schedule/manual feed.
   }

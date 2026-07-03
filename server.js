@@ -402,6 +402,7 @@ mqttClient.on("error", (err) => {
 
 let lastSensorEntry = null;
 let lastSensorArchiveTime = 0;
+let lastSeenDevice = 0;
 
 mqttClient.on("message", async (topic, payload) => {
   console.log(`[MQTT] ← ${topic}: ${payload.toString()}`);
@@ -437,9 +438,11 @@ mqttClient.on("message", async (topic, payload) => {
 
   if (topic === TOPIC_STATUS || topic === TOPIC_SENSOR) {
     if (data.online === false) {
+      lastSeenDevice = 0;
       io.emit("status", { online: false });
       return;
     }
+    lastSeenDevice = Date.now();
     const entry = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
@@ -519,6 +522,12 @@ setInterval(async () => {
     if (s.days === "weekends" && !isWeekend) continue;
 
     firedThisMinute.add(s.id);
+
+    const isDeviceOnline = (Date.now() - lastSeenDevice < 15000);
+    if (!isDeviceOnline) {
+      console.log(`[Schedule] "${s.label}" skipped at ${hhmm} — device is offline.`);
+      continue;
+    }
 
     mqttClient.publish(
       TOPIC_CMD,
