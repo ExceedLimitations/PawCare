@@ -272,31 +272,35 @@ void dispenseByWeight() {
   while (true) {
     float remaining = targetAbsoluteWeight - currentWeight;
 
-    // 1. In-Flight Compensation (stop 3g early)
-    if (remaining <= 3.0) {
+    // 1. In-Flight Compensation (stop early to account for kibble in the air)
+    // Decreased to 1.5g because the new trickle feed drops fewer kibbles per pulse
+    if (remaining <= 1.5) {
       Serial.println("[Dispense] Target reached (including in-flight offset).");
       break;
     }
 
-    // Hard timeout — increased to 25s to allow for the slower trickle-feed phase
-    if (millis() - dispenseStartTime > 25000) {
+    // Hard timeout — increased to 35s to allow for the slower, more precise trickle phase
+    if (millis() - dispenseStartTime > 35000) {
       Serial.println("[Dispense] TIMEOUT — stopping.");
       break;
     }
 
     if (scale.is_ready()) {
-      currentWeight = scale.get_units(1) - driftOffset; // Read current weight
+      // Take slightly more samples as we get closer to the target for stable reading
+      int samples = (remaining <= 15.0) ? 2 : 1; 
+      currentWeight = scale.get_units(samples) - driftOffset; 
     }
 
-    // 2. Trickle Feed & Spike Filtering
-    if (remaining > 12.0) {
-      // Full speed phase
+    // 2. Trickle Feed for Gram-Level Accuracy
+    if (remaining > 15.0) {
+      // Full speed phase until we are 15g away
       feederServo.write(70);
     } else {
-      // Trickle phase: pulse the servo to drop small amounts without overshooting
-      // 150ms open, 350ms closed
-      unsigned long cycle = (millis() - dispenseStartTime) % 500;
-      if (cycle < 150) {
+      // Trickle phase: very short pulses to drop ~1 kibble at a time
+      // 60ms open, 740ms closed (800ms total cycle)
+      // The longer closed time gives the scale time to physically settle and measure
+      unsigned long cycle = (millis() - dispenseStartTime) % 800;
+      if (cycle < 60) {
         feederServo.write(70);
       } else {
         feederServo.write(0);
