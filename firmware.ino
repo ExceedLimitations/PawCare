@@ -5,6 +5,8 @@
 #include <ESP32Servo.h>
 #include "HX711.h"
 #include <Preferences.h>          // Built-in ESP32 NVS — stores custom params
+#include <HTTPUpdate.h>             // HTTP OTA firmware updates
+#include <WiFiClientSecure.h>       // HTTPS support for OTA download
 
 // =============================================================================
 //  MQTT CONFIG  —  stored in NVS, editable via the captive-portal config page
@@ -46,6 +48,20 @@ const char* mqtt_client_id = "PawCareClient-device01";
 //  SETTINGS & GLOBALS
 // =============================================================================
 #define IR_JAM_STATE      LOW
+#define SERVO_CLOSED      160  // Rest/closed position — exactly 70° from the 90° neutral (right limit of ±70° range)
+#define SERVO_OPEN         70  // Full-open position (degrees) — 20° from the 90° neutral (within ±70° range)
+
+// =============================================================================
+//  HTTP OTA CONFIG
+// =============================================================================
+// Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
+// Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
+// Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
+#define FIRMWARE_VERSION  "1.0.0"
+#define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
+
+// How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
+bool triggerOTACheck = false; // set true by MQTT command to trigger a check
 
 float calibration_factor     = 418.95; // Official calibration factor
 int   targetWeight           = 100;   // grams — overridden by portion_g from dashboard
@@ -181,21 +197,35 @@ void startWiFiManager(bool forceConfig = false) {
 //  HELPERS
 // =============================================================================
 
-/** HC-SR04 ultrasonic distance (cm). Returns 0 on timeout. */
-int getDistance() {
+/** Single HC-SR04 ping — returns distance in cm, or 0 on timeout. */
+int pingOnce() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
-  
-  // Read the echo pin, timeout after 30000 microseconds (30ms)
   long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-  
-  if (duration > 0) {
-    return (duration * 0.034) / 2;
-  }
+  if (duration > 0) return (int)((duration * 0.034) / 2);
   return 0;
+}
+
+/**
+ * HC-SR04 distance with 3-sample median filter.
+ * Takes three pings 10 ms apart and returns the median value.
+ * Eliminates single-shot spikes caused by vibration, pouring
+ * turbulence, or acoustic interference.
+ */
+int getDistance() {
+  int s[3];
+  for (int i = 0; i < 3; i++) {
+    s[i] = pingOnce();
+    delay(10); // inter-ping gap — sensor needs ~8 ms to reset
+  }
+  // Simple sort of 3 elements then return middle
+  if (s[0] > s[1]) { int t = s[0]; s[0] = s[1]; s[1] = t; }
+  if (s[1] > s[2]) { int t = s[1]; s[1] = s[2]; s[2] = t; }
+  if (s[0] > s[1]) { int t = s[0]; s[0] = s[1]; s[1] = t; }
+  return s[1]; // median
 }
 
 /** Buzz + LED alert, then publish an alert message to the dashboard. */
@@ -256,13 +286,31 @@ void dispenseByWeight() {
     delay(100);
   }
 
-  float startingWeight = currentBowlWeight; 
+  // Read the baseline weight BEFORE attaching the servo.
+  // This avoids HX711 noise from the motor's inrush current corrupting the baseline.
+  float startingWeight = currentBowlWeight;
   if (scale.is_ready()) {
-    startingWeight = scale.get_units(3) - driftOffset;
+    startingWeight = scale.get_units(5) - driftOffset; // 5 samples for a stable baseline
   }
   float targetAbsoluteWeight = startingWeight + targetWeight;
 
-  feederServo.write(70);
+  // Re-attach servo just before use — it was detached while idle to prevent
+  // WiFi radio noise from causing slow unintended rotation.
+  feederServo.attach(SERVO_PIN, 500, 2400);
+  // Brief pre-charge pause: lets the 1000µF capacitor refill on the VIN rail
+  // before the servo draws inrush current. Reduces voltage sag at startup.
+  delay(80);
+  feederServo.write(SERVO_OPEN);
+
+  // Motor startup blackout: the servo motor's inrush current (and VIN rail sag)
+  // makes the HX711 read falsely high for up to ~1 s after startup.
+  // If we read the scale during this window, 'remaining' collapses and the dispense
+  // jumps straight into trickle mode (looks like 'servo turns slowly').
+  // Extended to 1200 ms to cover slower cap recharge times on marginal supplies.
+  const unsigned long MOTOR_SETTLE_MS  = 1200;
+  // Outlier filter: maximum plausible weight change per 50 ms loop cycle.
+  // Anything larger is a VIN-sag spike from the HX711 — reject it.
+  const float         MAX_WEIGHT_DELTA = 15.0; // grams
 
   float         currentWeight      = startingWeight;
   unsigned long irBlockStartTime   = 0;
@@ -273,37 +321,48 @@ void dispenseByWeight() {
     float remaining = targetAbsoluteWeight - currentWeight;
 
     // 1. In-Flight Compensation (stop early to account for kibble in the air)
-    // Decreased to 1.5g because the new trickle feed drops fewer kibbles per pulse
-    if (remaining <= 1.5) {
+    // Raised to 3.0g to better account for kibble already airborne during trickle.
+    if (remaining <= 3.0) {
       Serial.println("[Dispense] Target reached (including in-flight offset).");
       break;
     }
 
-    // Hard timeout — increased to 35s to allow for the slower, more precise trickle phase
+    // Hard timeout — 35s to allow for the slower, more precise trickle phase
     if (millis() - dispenseStartTime > 35000) {
       Serial.println("[Dispense] TIMEOUT — stopping.");
       break;
     }
 
-    if (scale.is_ready()) {
-      // Take slightly more samples as we get closer to the target for stable reading
-      int samples = (remaining <= 15.0) ? 2 : 1; 
-      currentWeight = scale.get_units(samples) - driftOffset; 
+    if (scale.is_ready() && (millis() - dispenseStartTime > MOTOR_SETTLE_MS)) {
+      // Take 3 samples in trickle phase for a more stable reading near target
+      int samples = (remaining <= 15.0) ? 3 : 1;
+      float newWeight = scale.get_units(samples) - driftOffset;
+
+      // Outlier filter: reject readings that jump implausibly fast —
+      // these are caused by VIN rail voltage sag from servo inrush current
+      // corrupting the HX711 ADC. Keep the last known-good value instead.
+      if (abs(newWeight - currentWeight) <= MAX_WEIGHT_DELTA) {
+        currentWeight = newWeight;
+      } else {
+        Serial.printf("[Dispense] Scale spike ignored: %.1fg -> %.1fg (delta %.1fg)\n",
+                      currentWeight, newWeight, abs(newWeight - currentWeight));
+      }
     }
 
     // 2. Trickle Feed for Gram-Level Accuracy
     if (remaining > 15.0) {
       // Full speed phase until we are 15g away
-      feederServo.write(70);
+      feederServo.write(SERVO_OPEN);
     } else {
-      // Trickle phase: very short pulses to drop ~1 kibble at a time
-      // 60ms open, 740ms closed (800ms total cycle)
-      // The longer closed time gives the scale time to physically settle and measure
+      // Trickle phase: very short pulses to drop ~1 kibble at a time.
+      // 35ms open, 765ms closed (800ms total cycle).
+      // Shorter open window means fewer kibbles per pulse and less overshoot.
+      // The long closed period lets the scale settle before the next read.
       unsigned long cycle = (millis() - dispenseStartTime) % 800;
-      if (cycle < 60) {
-        feederServo.write(70);
+      if (cycle < 35) {
+        feederServo.write(SERVO_OPEN);
       } else {
-        feederServo.write(0);
+        feederServo.write(SERVO_CLOSED);
       }
     }
 
@@ -314,9 +373,9 @@ void dispenseByWeight() {
         irBlockStartTime = millis();
       } else if (millis() - irBlockStartTime > jamTimeout) {
         Serial.println("[JAM] Anti-jam sequence triggered.");
-        feederServo.write(0);
+        feederServo.write(SERVO_CLOSED);
         delay(1000);
-        feederServo.write(70);
+        feederServo.write(SERVO_OPEN);
         delay(1000);
         
         if (digitalRead(IR_PIN) == IR_JAM_STATE) {
@@ -344,10 +403,12 @@ void dispenseByWeight() {
     delay(50);
   }
 
-  feederServo.write(0);
+  feederServo.write(SERVO_CLOSED);
 
   Serial.println("[Dispense] Servo stopped — settling...");
-  delay(1500);
+  delay(1500); // Wait for servo to fully close and scale to settle
+
+  feederServo.detach(); // Detach again — no more PWM until next dispense
 
   if (scale.is_ready()) {
     currentBowlWeight = scale.get_units(5) - driftOffset; // get average over 5 readings
@@ -368,6 +429,85 @@ void dispenseByWeight() {
 
   // Immediately push result so the dashboard shows updated data
   sendTelemetry(lastValidLevel);
+}
+
+// =============================================================================
+//  HTTP OTA UPDATE
+// =============================================================================
+/**
+ * Checks the hosted version.json manifest.
+ * If the reported version differs from FIRMWARE_VERSION, downloads and
+ * flashes the new binary.  The device reboots automatically on success.
+ */
+void checkForOTAUpdate() {
+  Serial.println("[OTA] Checking for firmware update...");
+
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure(); // Skip cert validation — acceptable for private use.
+                              // For production, set a root CA cert instead.
+
+  HTTPClient http;
+  http.begin(secureClient, OTA_VERSION_URL);
+  int code = http.GET();
+
+  if (code != 200) {
+    Serial.printf("[OTA] Version check failed (HTTP %d). Skipping.\n", code);
+    http.end();
+    return;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  StaticJsonDocument<256> doc;
+  if (deserializeJson(doc, payload) != DeserializationError::Ok) {
+    Serial.println("[OTA] Bad version.json — skipping.");
+    return;
+  }
+
+  String remoteVersion = doc["version"] | "";
+  String binUrl        = doc["url"]     | "";
+
+  Serial.printf("[OTA] Device: %s  |  Available: %s\n",
+                FIRMWARE_VERSION, remoteVersion.c_str());
+
+  if (remoteVersion == FIRMWARE_VERSION || binUrl.isEmpty()) {
+    Serial.println("[OTA] Firmware is up to date.");
+    return;
+  }
+
+  // New version available — start flashing
+  Serial.printf("[OTA] Updating to %s from:\n  %s\n",
+                remoteVersion.c_str(), binUrl.c_str());
+
+  // Single long beep: update starting
+  digitalWrite(BUZZER_PIN, HIGH); delay(300); digitalWrite(BUZZER_PIN, LOW);
+
+  httpUpdate.setLedPin(STATUS_LED_PIN, LOW); // Blink status LED during flash
+  t_httpUpdate_return result = httpUpdate.update(secureClient, binUrl);
+
+  switch (result) {
+    case HTTP_UPDATE_OK:
+      Serial.println("[OTA] ✓ Update successful — rebooting.");
+      // Triple beep on success (device reboots immediately after)
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(BUZZER_PIN, HIGH); delay(80);
+        digitalWrite(BUZZER_PIN, LOW);  delay(80);
+      }
+      break;
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("[OTA] ✗ Update failed: %s\n",
+                    httpUpdate.getLastErrorString().c_str());
+      // Two short beeps: failure
+      for (int i = 0; i < 2; i++) {
+        digitalWrite(BUZZER_PIN, HIGH); delay(100);
+        digitalWrite(BUZZER_PIN, LOW);  delay(100);
+      }
+      break;
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("[OTA] No update needed (server agrees).");
+      break;
+  }
 }
 
 // =============================================================================
@@ -401,6 +541,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
     lastDispensedWeight  = 0.0;
     Serial.println("[CMD] Bowl marked as empty. Scale tared.");
     sendTelemetry(lastValidLevel);
+
+  } else if (action == "ota_update") {
+    // Dashboard or remote trigger — queue an immediate OTA check
+    Serial.println("[CMD] OTA update requested via MQTT.");
+    triggerOTACheck = true;
 
   } else {
     Serial.printf("[CMD] Unknown action: %s\n", action.c_str());
@@ -488,6 +633,12 @@ void setup() {
   startWiFiManager(forcePortal);
   buildTopics();
 
+  // ── HTTP OTA ────────────────────────────────────────────────────────────────
+  // Checks OTA_VERSION_URL every OTA_CHECK_INTERVAL ms (default 6 h).
+  // Can also be triggered instantly via MQTT: {"action":"ota_update"}
+  Serial.printf("[OTA] HTTP OTA ready. Firmware: %s  Check interval: %lu h\n",
+                FIRMWARE_VERSION, OTA_CHECK_INTERVAL / 3600000UL);
+
   // ── MQTT ───────────────────────────────────────────────────────────────────
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
@@ -500,7 +651,9 @@ void setup() {
   ESP32PWM::allocateTimer(3);
   feederServo.setPeriodHertz(50);
   feederServo.attach(SERVO_PIN, 500, 2400);
-  feederServo.write(0);
+  feederServo.write(SERVO_CLOSED); // 160° — within ±70° of the 90° neutral position
+  delay(500);          // Give servo time to reach closed position
+  feederServo.detach(); // Detach so WiFi radio noise can't drive the servo while idle
 
   // ── Load Cell ──────────────────────────────────────────────────────────────
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
@@ -519,6 +672,13 @@ void setup() {
 //  MAIN LOOP
 // =============================================================================
 void loop() {
+  // ── HTTP OTA — triggered by MQTT command only ─────────────────────────────────
+  // Send {"action":"ota_update"} from the dashboard to flash new firmware.
+  if (triggerOTACheck) {
+    triggerOTACheck = false;
+    checkForOTAUpdate();
+  }
+
   // ── MQTT keepalive ──────────────────────────────────────────────────────────
   if (!client.connected()) {
     reconnect();
@@ -527,24 +687,85 @@ void loop() {
   }
   client.loop();
 
-  // ── Manual dispense button (with debounce) ──────────────────────────────────
-  static bool lastButtonState = HIGH;
+  // ── Button: short press = dispense | hold ≥2 s = tare scale ────────────────
+  //
+  //  SHORT PRESS  (< 2 000 ms)  → manual 100 g dispense  (unchanged behaviour)
+  //  LONG HOLD    (≥ 2 000 ms)  → re-tare the load cell
+  //    Use case: you forgot to place the bowl before boot and the scale is
+  //    reading the bowl weight as food weight.  Place the empty bowl, then
+  //    hold the button for 2 s to zero the scale with the bowl in place.
+  //
+  static bool          lastButtonState  = HIGH;
+  static bool          buttonHeld       = false;
+  static unsigned long buttonPressTime  = 0;
+  static bool          tareArmed        = false;   // tare pending on release
+  const  unsigned long TARE_HOLD_MS     = 2000;    // hold duration for tare
+
   bool currentButtonState = digitalRead(BUTTON_PIN);
+
   if (lastButtonState == HIGH && currentButtonState == LOW) {
-    Serial.println("[BTN] Manual dispense pressed.");
-    targetWeight = 100; 
-    triggerDashboardFeed = true; // Route the physical button to the same flag
-    
-    // Notify the backend immediately
-    StaticJsonDocument<128> doc;
-    doc["portion_g"] = targetWeight;
-    doc["type"] = "physical";
-    char buffer[128];
-    serializeJson(doc, buffer);
-    client.publish(TOPIC_FEED_LOG, buffer);
-    
-    delay(200);
+    // ── Button just pressed ─────────────────────────────────────────────────
+    buttonPressTime = millis();
+    buttonHeld      = true;
+    tareArmed       = false;
   }
+
+  if (buttonHeld && currentButtonState == LOW) {
+    // ── Button still held — check if we've crossed the tare threshold ───────
+    if (!tareArmed && (millis() - buttonPressTime >= TARE_HOLD_MS)) {
+      tareArmed = true;
+      // Give haptic feedback: single long beep so the user knows tare is queued
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(300);
+      digitalWrite(BUZZER_PIN, LOW);
+    }
+  }
+
+  if (lastButtonState == LOW && currentButtonState == HIGH) {
+    // ── Button just released ────────────────────────────────────────────────
+    unsigned long holdDuration = millis() - buttonPressTime;
+    buttonHeld = false;
+
+    if (tareArmed) {
+      // ── LONG HOLD: tare the scale ─────────────────────────────────────────
+      Serial.println("[BTN] Long hold detected — taring scale.");
+      if (scale.is_ready()) {
+        scale.tare();
+        driftOffset       = 0.0;
+        currentBowlWeight = 0.0;
+        Serial.println("[TARE] Scale tared successfully (bowl weight zeroed).");
+
+        // Triple beep + LED flash as confirmation
+        for (int i = 0; i < 3; i++) {
+          digitalWrite(BUZZER_PIN,    HIGH);
+          digitalWrite(STATUS_LED_PIN, LOW);
+          delay(100);
+          digitalWrite(BUZZER_PIN,    LOW);
+          digitalWrite(STATUS_LED_PIN, HIGH);
+          delay(100);
+        }
+
+        sendTelemetry(lastValidLevel); // Update dashboard immediately
+      } else {
+        Serial.println("[TARE] Scale not ready — tare skipped.");
+      }
+      tareArmed = false;
+
+    } else if (holdDuration < TARE_HOLD_MS) {
+      // ── SHORT PRESS: manual dispense ─────────────────────────────────────
+      Serial.println("[BTN] Short press — manual dispense.");
+      targetWeight         = 100;
+      triggerDashboardFeed = true;
+
+      StaticJsonDocument<128> doc;
+      doc["portion_g"] = targetWeight;
+      doc["type"]      = "physical";
+      char buffer[128];
+      serializeJson(doc, buffer);
+      client.publish(TOPIC_FEED_LOG, buffer);
+    }
+  }
+
   lastButtonState = currentButtonState;
 
   // ── Execute Feed ────────────────────────────────────────────────────────────
@@ -556,26 +777,49 @@ void loop() {
   }
 
   // ── Ultrasonic hopper level ─────────────────────────────────────────────────
-  int dist = getDistance();
-  static int sensorFailCount = 0;
-  static bool sensorAlerted = false;
-  static int lastValidDist = 9; // Assume empty on boot
+  int dist = getDistance(); // median of 3 pings
+  static int  sensorFailCount    = 0;
+  static bool sensorAlerted      = false;
+  static int  lastValidDist      = 9;  // Assume ~empty on boot
+  // Change-guard counters: require N consecutive identical conclusions
+  // before updating lastValidLevel. Prevents fast-pour turbulence from
+  // causing a momentary 0% reading.
+  static int  zeroConfirmCount   = 0;  // consecutive "empty" timeouts
+  static int  fullConfirmCount   = 0;  // consecutive "full" timeouts
+  static const int CONFIRM_NEEDED = 3; // pings needed to commit a state change
 
   if (dist == 0) {
-    // 0 means timeout. This happens EITHER when completely empty (sound scatters)
-    // OR when completely full (kibble touching mesh). We use history to guess:
+    // Timeout: ambiguous — full (kibble at mesh) OR empty (sound scatters).
+    // Use last known distance to decide, but only commit after CONFIRM_NEEDED
+    // consecutive occurrences so a single turbulence burst is ignored.
     if (lastValidDist <= 4) {
-      lastValidLevel = 100; // Was mostly full, so it's touching the mesh
+      // Was nearly full → likely touching mesh → probably still full
+      fullConfirmCount++;
+      zeroConfirmCount = 0;
+      if (fullConfirmCount >= CONFIRM_NEEDED) {
+        lastValidLevel = 100;
+        fullConfirmCount = CONFIRM_NEEDED; // clamp
+      }
     } else {
-      lastValidLevel = 0;   // Was mostly empty, so it's scattering
+      // Was far from sensor → likely empty
+      zeroConfirmCount++;
+      fullConfirmCount = 0;
+      if (zeroConfirmCount >= CONFIRM_NEEDED) {
+        lastValidLevel = 0;
+        zeroConfirmCount = CONFIRM_NEEDED; // clamp
+      }
+      // If not yet confirmed, leave lastValidLevel unchanged (hold last good value)
     }
     sensorFailCount = 0;
-    sensorAlerted = false;
+    sensorAlerted   = false;
   } else if (dist > 0 && dist < 200) {
-    lastValidDist = dist;
-    lastValidLevel = constrain(map(dist, 2, 9, 100, 0), 0, 100);
-    sensorFailCount = 0;
-    sensorAlerted = false;
+    // Good reading — update immediately, reset confirmation counters
+    lastValidDist    = dist;
+    lastValidLevel   = constrain(map(dist, 2, 9, 100, 0), 0, 100);
+    zeroConfirmCount = 0;
+    fullConfirmCount = 0;
+    sensorFailCount  = 0;
+    sensorAlerted    = false;
   } else {
     sensorFailCount++;
     if (sensorFailCount >= 15 && !sensorAlerted) {

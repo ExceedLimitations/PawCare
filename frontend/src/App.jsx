@@ -325,6 +325,7 @@ export default function App() {
   const [lastSyncTime, setLastSyncTime] = useState('—');
   const [deviceConnected, setDeviceConnected] = useState(false);
   const [manualPortion, setManualPortion] = useState(100);
+  const [otaUpdating, setOtaUpdating] = useState(false);
   const deviceTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -479,6 +480,21 @@ export default function App() {
     setTimeout(() => {
       setFeeding(false);
     }, 15000);
+  };
+
+  const triggerOTAUpdate = async () => {
+    if (otaUpdating) return;
+    if (!confirm('Send firmware update command to device? The device will check for a new version and reboot if one is available.')) return;
+    setOtaUpdating(true);
+    addLog('info', 'OTA update command sent to device');
+    try {
+      await authFetch('/firmware/update', { method: 'POST' });
+      addAlert('info', 'OTA Update Triggered', 'Device is checking for firmware updates. It will reboot automatically if a new version is found.');
+    } catch (err) {
+      addAlert('error', 'OTA Failed', 'Could not send update command to device.');
+    } finally {
+      setTimeout(() => setOtaUpdating(false), 5000);
+    }
   };
 
   const toggleSchedule = (id, enabled) => {
@@ -854,6 +870,33 @@ export default function App() {
               )}
             </button>
           </div>
+
+          <button
+            onClick={triggerOTAUpdate}
+            disabled={otaUpdating || !connected}
+            style={{
+              width: '100%',
+              marginTop: '8px',
+              padding: '10px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              background: otaUpdating ? 'var(--bg-muted)' : 'transparent',
+              border: '1px solid var(--border-dark)',
+              borderRadius: '10px',
+              color: otaUpdating ? 'var(--text-muted)' : 'var(--text-light)',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              cursor: otaUpdating || !connected ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            <Cpu size={14} />
+            {otaUpdating ? 'Update Command Sent...' : 'Update Firmware'}
+          </button>
         </section>
 
         {/* Middle Column — Charts & Schedules */}

@@ -6,6 +6,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
+const fs = require("fs");
 const mqtt = require("mqtt");
 const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
@@ -56,7 +57,54 @@ const feedLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, message: { success
 
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
-/* ── Auth config — crash immediately if secrets are missing ── */
+/* ── OTA Firmware endpoints (public — ESP32 cannot send auth headers) ── */
+// Place firmware.bin and version.json in the /firmware directory at the
+// project root.  Bump the version string in version.json to trigger an
+// OTA update on all connected devices within their next check interval.
+const FIRMWARE_DIR = path.join(__dirname, "firmware");
+
+// GET /firmware/version.json
+// Returns: { "version": "1.0.1", "url": "https://pawcare-rcd9.onrender.com/firmware/firmware.bin" }
+app.get("/firmware/version.json", (_req, res) => {
+  const versionFile = path.join(FIRMWARE_DIR, "version.json");
+  if (!fs.existsSync(versionFile)) {
+    return res.status(404).json({ error: "No firmware manifest found" });
+  }
+  res.setHeader("Content-Type", "application/json");
+  res.sendFile(versionFile);
+});
+
+// GET /firmware/firmware.bin
+// Streams the compiled firmware binary to the ESP32 during OTA flash.
+app.get("/firmware/firmware.bin", (_req, res) => {
+  const binFile = path.join(FIRMWARE_DIR, "firmware.bin");
+  if (!fs.existsSync(binFile)) {
+    return res.status(404).send("No firmware binary found");
+  }
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Content-Disposition", "attachment; filename=firmware.bin");
+  res.sendFile(binFile);
+});
+
+// POST /firmware/update  (authenticated)
+// Sends an MQTT command to the device to check for and apply a new firmware update.
+app.post("/firmware/update", authenticate, (_req, res) => {
+  mqttClient.publish(
+    TOPIC_CMD,
+    JSON.stringify({ action: "ota_update" }),
+    { qos: 1 },
+    (err) => {
+      if (err) {
+        console.error("[OTA] Failed to publish ota_update command:", err.message);
+        return res.status(500).json({ success: false, error: "Failed to send command" });
+      }
+      console.log("[OTA] Update command sent to device.");
+      res.json({ success: true, message: "OTA update command sent to device" });
+    }
+  );
+});
+
+
 const ADMIN_USER = process.env.ADMIN_USER;
 const ADMIN_PASS = process.env.ADMIN_PASS;
 const JWT_SECRET = process.env.JWT_SECRET;
