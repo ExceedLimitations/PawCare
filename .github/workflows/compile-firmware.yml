@@ -49,19 +49,17 @@ jobs:
       # ── 5. Compile sketch ─────────────────────────────────────────────────────
       # arduino-cli requires the sketch to sit in a folder with the same name.
       # We copy firmware.ino into a temp folder to satisfy this requirement.
-      - name: Compile firmware.ino
+      - name: Compile firmware
         run: |
-          mkdir -p /tmp/firmware_sketch
-          cp firmware.ino /tmp/firmware_sketch/firmware.ino
+          mkdir -p /tmp/firmware
+          cp firmware.ino /tmp/firmware/firmware.ino
           mkdir -p /tmp/build
           arduino-cli compile \
             --fqbn esp32:esp32:esp32 \
             --output-dir /tmp/build \
-            /tmp/firmware_sketch
-
-      # ── 6. Copy binary into repo ──────────────────────────────────────────────
-      - name: Copy compiled binary
-        run: |
+            /tmp/firmware
+          
+          # Move compiled binary to the expected location
           mkdir -p firmware
           cp /tmp/build/firmware.ino.bin firmware/firmware.bin
           echo "Binary size: $(du -sh firmware/firmware.bin | cut -f1)"
