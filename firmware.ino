@@ -59,7 +59,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.0.7"
+#define FIRMWARE_VERSION  "1.0.9"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -510,6 +510,8 @@ void checkForOTAUpdate() {
   // Single long beep: update starting
   digitalWrite(BUZZER_PIN, HIGH); delay(300); digitalWrite(BUZZER_PIN, LOW);
 
+  // Disable auto-reboot so we can publish the success message via MQTT first
+  httpUpdate.rebootOnUpdate(false);
   httpUpdate.setLedPin(STATUS_LED_PIN, LOW); // Blink status LED during flash
   t_httpUpdate_return result = httpUpdate.update(secureClient, binUrl);
 
@@ -517,11 +519,17 @@ void checkForOTAUpdate() {
     case HTTP_UPDATE_OK:
       Serial.println("[OTA] ✓ Update successful — rebooting.");
       publishOtaStatus("success", remoteVersion.c_str());
-      // Triple beep on success (device reboots immediately after)
+      
+      // Give the network stack time to actually send the MQTT packet before rebooting
+      delay(500); 
+
+      // Triple beep on success
       for (int i = 0; i < 3; i++) {
         digitalWrite(BUZZER_PIN, HIGH); delay(80);
         digitalWrite(BUZZER_PIN, LOW);  delay(80);
       }
+      
+      ESP.restart(); // Now it's safe to reboot
       break;
     case HTTP_UPDATE_FAILED: {
       String errMsg = httpUpdate.getLastErrorString();
@@ -640,11 +648,7 @@ void setup() {
   pinMode(TRIG_PIN,       OUTPUT);
   pinMode(ECHO_PIN,       INPUT);
 
-  // Drive servo pin LOW immediately — before WiFi starts.
-  // Without this, pin 13 floats during the WiFi connection phase and picks up
-  // radio/power-rail noise which the servo interprets as a PWM signal and moves.
-  pinMode(SERVO_PIN,      OUTPUT);
-  digitalWrite(SERVO_PIN, LOW);
+  // Servo initialization is delayed until AFTER WiFi connects to prevent RF interference.
 
 
   // ── Load saved MQTT settings from NVS ──────────────────────────────────────
