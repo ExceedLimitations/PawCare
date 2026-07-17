@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.12"
+#define FIRMWARE_VERSION  "1.1.13"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -324,6 +324,11 @@ void dispenseByWeight() {
   // Outlier filter: reject implausibly large single-cycle jumps (VIN sag artefacts).
   const float         MAX_WEIGHT_DELTA = 35.0; // grams
 
+  // In-Flight Compensation (stop early to account for kibble in the air)
+  // Without trickle feed, we must stop significantly early to account for
+  // the ~400ms lag of the HX711 chip + the physical kibble falling through the air.
+  const float IN_FLIGHT_OFFSET_G = 23.0; // Tuned to fix the 11g overshoot observed with 12g offset
+
   float         currentWeight      = startingWeight;
   unsigned long irBlockStartTime   = 0;
   unsigned long dispenseStartTime  = millis();
@@ -332,11 +337,6 @@ void dispenseByWeight() {
   while (true) {
     float remaining = targetAbsoluteWeight - currentWeight;
 
-    // 1. In-Flight Compensation (stop early to account for kibble in the air)
-    // Without trickle feed, we must stop significantly early to account for
-    // the ~400ms lag of the HX711 chip + the physical kibble falling through the air.
-    const float IN_FLIGHT_OFFSET_G = 23.0; // Tuned to fix the 11g overshoot observed with 12g offset
-    
     // Safety check: ensure it pours for at least a fraction of a second even for very small targets
     if (remaining <= IN_FLIGHT_OFFSET_G && (millis() - dispenseStartTime > MOTOR_SETTLE_MS + 200)) {
       Serial.println("[Dispense] Target reached (including in-flight offset).");
@@ -447,7 +447,7 @@ void dispenseByWeight() {
  * flashes the new binary.  The device reboots automatically on success.
  */
 /** Publish a short OTA status update so the dashboard can show live progress. */
-void publishOtaStatus(const char* status, const char* version = "", const char* error = "") {
+void publishOtaStatus(const char* status, const char* version, const char* error) {
   StaticJsonDocument<128> doc;
   doc["status"]  = status;
   if (strlen(version) > 0) doc["version"] = version;
@@ -464,6 +464,14 @@ void publishOtaStatus(const char* status, const char* version = "", const char* 
   }
 
   client.loop(); // flush immediately
+}
+
+void publishOtaStatus(const char* status, const char* version) {
+  publishOtaStatus(status, version, "");
+}
+
+void publishOtaStatus(const char* status) {
+  publishOtaStatus(status, "", "");
 }
 
 void checkForOTAUpdate() {
