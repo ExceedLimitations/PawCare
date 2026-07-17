@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.7"
+#define FIRMWARE_VERSION  "1.1.8"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -359,8 +359,12 @@ void dispenseByWeight() {
           // Only update the weight after the kibble has dropped and the scale 
           // has physically stopped vibrating (cycle > 500ms)
           if (cycle > 500) {
-            // Apply light EWMA smoothing during trickle phase
-            currentWeight = (0.5 * newWeight) + (0.5 * currentWeight);
+            // Since the kibble has settled, we can trust the reading 100%.
+            // Removed the EWMA filter because it was causing a mathematical
+            // lag (averaging the new higher weight with the old lower weight)
+            // which made the system think it was lighter than it actually was,
+            // causing it to pulse extra times and overshoot.
+            currentWeight = newWeight;
           }
         } else {
           currentWeight = newWeight;
