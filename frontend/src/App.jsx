@@ -327,6 +327,7 @@ export default function App() {
   const [manualPortion, setManualPortion] = useState(100);
   const [otaUpdating, setOtaUpdating] = useState(false);
   const [otaStatus, setOtaStatus] = useState(null); // null | {status, version?, error?}
+  const [fwVersion, setFwVersion] = useState(null);  // last known ESP32 firmware version
   const deviceTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -381,6 +382,8 @@ export default function App() {
 
   const handleOtaStatus = useCallback((data) => {
     setOtaStatus(data);
+    // Capture the version string whenever the device reports it
+    if (data.version) setFwVersion(data.version);
     // Auto-clear non-active statuses after 10 s so the banner doesn't linger forever
     if (data.status === 'up_to_date' || data.status === 'failed' || data.status === 'success') {
       setTimeout(() => setOtaStatus(null), 10000);
@@ -706,10 +709,28 @@ export default function App() {
             </div>
             <span className="brand-text font-serif">PawCare Platform</span>
           </div>
-          <div className={`status-badge ${connected && deviceConnected ? 'online' : 'offline'}`}>
-            <span className="status-dot"></span>
-            {connected && deviceConnected ? 'System Online' : 'System Offline'}
-          </div>
+          {otaStatus ? (() => {
+            const otaCfg = {
+              checking:    { cls: 'ota-checking',    dot: 'spin',   label: 'Checking Update...' },
+              downloading: { cls: 'ota-downloading', dot: 'spin',   label: `Downloading v${otaStatus.version || ''}...` },
+              up_to_date:  { cls: 'ota-ok',          dot: 'static', label: `Up to Date (v${otaStatus.version || ''})` },
+              success:     { cls: 'ota-ok',          dot: 'static', label: `Updated to v${otaStatus.version || ''} — Rebooting` },
+              failed:      { cls: 'ota-failed',      dot: 'static', label: `Update Failed` },
+            }[otaStatus.status] || { cls: 'ota-checking', dot: 'static', label: otaStatus.status };
+            return (
+              <div className={`status-badge ${otaCfg.cls}`}>
+                {otaCfg.dot === 'spin'
+                  ? <Loader2 size={10} style={{ animation: 'spin 1.2s linear infinite', flexShrink: 0 }} />
+                  : <span className="status-dot" />}
+                {otaCfg.label}
+              </div>
+            );
+          })() : (
+            <div className={`status-badge ${connected && deviceConnected ? 'online' : 'offline'}`}>
+              <span className="status-dot"></span>
+              {connected && deviceConnected ? 'System Online' : 'System Offline'}
+            </div>
+          )}
         </div>
 
         {/* Center — System Status */}
@@ -845,6 +866,16 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="telemetry-item">
+                <div className="telemetry-label">
+                  <div className="telemetry-icon-min"><Cpu size={16} /></div>
+                  Firmware
+                </div>
+                <div className="telemetry-status-minimal font-mono" style={{ color: fwVersion ? 'var(--text-secondary)' : 'var(--text-muted)', fontSize: '0.78rem' }}>
+                  {fwVersion ? `v${fwVersion}` : '—'}
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -911,38 +942,7 @@ export default function App() {
             {otaUpdating ? 'Update Command Sent...' : 'Update Firmware'}
           </button>
 
-          {/* OTA Status Banner */}
-          {otaStatus && (() => {
-            const cfg = {
-              checking:   { color: 'var(--status-warning)', bg: 'rgba(245,158,11,0.1)', label: '⟳ Checking for update...' },
-              downloading:{ color: '#3B82F6',               bg: 'rgba(59,130,246,0.1)', label: `⬇ Downloading v${otaStatus.version || ''}...` },
-              up_to_date: { color: 'var(--status-ok)',      bg: 'rgba(16,185,129,0.1)', label: `✓ Firmware is up to date (v${otaStatus.version || ''})` },
-              success:    { color: 'var(--status-ok)',      bg: 'rgba(16,185,129,0.1)', label: `✓ Update to v${otaStatus.version || ''} applied — rebooting...` },
-              failed:     { color: 'var(--status-error)',   bg: 'rgba(239,68,68,0.1)',  label: `✗ Update failed: ${otaStatus.error || 'unknown error'}` },
-            }[otaStatus.status] || { color: 'var(--text-muted)', bg: 'transparent', label: otaStatus.status };
-            return (
-              <div style={{
-                marginTop: '8px',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                background: cfg.bg,
-                border: `1px solid ${cfg.color}`,
-                color: cfg.color,
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                fontFamily: "'JetBrains Mono', monospace",
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                animation: 'fadeIn 0.3s ease',
-              }}>
-                {(otaStatus.status === 'checking' || otaStatus.status === 'downloading') && (
-                  <Loader2 size={12} style={{ animation: 'spin 1.5s linear infinite', flexShrink: 0 }} />
-                )}
-                {cfg.label}
-              </div>
-            );
-          })()}
+
         </section>
 
         {/* Middle Column — Charts & Schedules */}

@@ -100,6 +100,12 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 .status-badge.online  { color: var(--status-ok);    background: var(--status-ok-bg);    border: 1px solid #A7F3D0; }
 .status-badge.offline { color: var(--status-error);  background: var(--status-error-bg); border: 1px solid #FECACA; }
 
+/* OTA update state variants */
+.status-badge.ota-checking    { color: #F59E0B; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.4); }
+.status-badge.ota-downloading { color: #3B82F6; background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.4); }
+.status-badge.ota-ok          { color: var(--status-ok); background: var(--status-ok-bg); border: 1px solid #A7F3D0; }
+.status-badge.ota-failed      { color: var(--status-error); background: var(--status-error-bg); border: 1px solid #FECACA; }
+
 .status-dot {
   width: 7px; height: 7px; border-radius: 50%;
   background-color: currentColor;

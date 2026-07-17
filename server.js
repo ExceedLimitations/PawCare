@@ -426,6 +426,16 @@ io.on("connection", async (socket) => {
       console.error("[Firebase] Error saving socket feed:", err.message);
     }
   });
+  socket.on("tare", () => {
+    mqttClient.publish(
+      TOPIC_CMD,
+      JSON.stringify({ action: "tare" }),
+      { qos: 1 },
+    );
+    io.emit("tare_ack", { timestamp: new Date().toISOString() });
+    console.log("[Tare] Scale tare command sent to device via MQTT.");
+  });
+
   socket.on("disconnect", () =>
     console.log(`[Socket.io] Disconnected — ${socket.id}`),
   );
