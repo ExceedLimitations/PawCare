@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.1"
+#define FIRMWARE_VERSION  "1.1.2"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -76,6 +76,8 @@ int   lastValidLevel         = 72;    // hopper fill level (%)
 float currentBowlWeight      = 0.0;   // Keep variable for telemetry
 float driftOffset            = 0.0;   // Auto-Zero Tracking software offset
 bool  triggerDashboardFeed   = false;
+bool  g_tareJustFired        = false;  // set by button tare, consumed by load-cell block
+unsigned long g_tareFiredAt  = 0;      // millis() timestamp of last tare
 
 unsigned long lastAutoFeedTime = 0;
 const unsigned long feedCooldown = 60000; // ms between feeds
@@ -780,9 +782,13 @@ void loop() {
       Serial.println("[BTN] Long hold detected — taring scale.");
       if (scale.is_ready()) {
         scale.tare();
-        driftOffset       = 0.0;
-        currentBowlWeight = 0.0;
+        driftOffset          = 0.0;
+        currentBowlWeight    = 0.0;
+        lastDispensedWeight  = 0.0;
         Serial.println("[TARE] Scale tared successfully (bowl weight zeroed).");
+
+        g_tareJustFired = true;
+        g_tareFiredAt   = millis();
 
         // Triple beep + LED flash as confirmation
         for (int i = 0; i < 3; i++) {
@@ -937,6 +943,14 @@ void loop() {
     // 1 sample + manual rolling average to avoid blocking loop
     static float weightSamples[5] = {0,0,0,0,0};
     static int sampleIndex = 0;
+
+    // Flush stale samples immediately after a tare so the rolling average
+    // doesn't average old pre-tare readings with the new zeroed readings.
+    if (g_tareJustFired) {
+      for (int i = 0; i < 5; i++) weightSamples[i] = 0.0;
+      sampleIndex = 0;
+    }
+
     weightSamples[sampleIndex] = scale.get_units(1);
     sampleIndex = (sampleIndex + 1) % 5;
     
@@ -945,15 +959,24 @@ void loop() {
     rawWeight /= 5.0;
     
     // Auto-Zero Tracking (AZT)
-    float adjustedWeight = rawWeight - driftOffset;
-    
-    // If the weight is between -5g and +5g, it's likely just drift/crumbs
-    if (abs(adjustedWeight) < 5.0) {
-      // Slowly pull the offset towards the raw weight to absorb the drift
-      driftOffset += adjustedWeight * 0.1;
-      currentBowlWeight = 0.0; // Snap to 0 for telemetry
+    // Skip for 1 s after a tare — HX711 needs time to settle and we don't
+    // want noise spikes > 5 g to immediately overwrite currentBowlWeight.
+    const unsigned long TARE_SETTLE_MS = 1000;
+    if (g_tareJustFired && (millis() - g_tareFiredAt < TARE_SETTLE_MS)) {
+      currentBowlWeight = 0.0; // hold at zero during settle window
     } else {
-      currentBowlWeight = adjustedWeight;
+      g_tareJustFired = false; // settle window expired
+
+      float adjustedWeight = rawWeight - driftOffset;
+      
+      // If the weight is between -5g and +5g, it's likely just drift/crumbs
+      if (abs(adjustedWeight) < 5.0) {
+        // Slowly pull the offset towards the raw weight to absorb the drift
+        driftOffset += adjustedWeight * 0.1;
+        currentBowlWeight = 0.0; // Snap to 0 for telemetry
+      } else {
+        currentBowlWeight = adjustedWeight;
+      }
     }
   }
 
