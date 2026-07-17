@@ -49,9 +49,8 @@ const char* mqtt_client_id = "PawCareClient-device01";
 //  SETTINGS & GLOBALS
 // =============================================================================
 #define IR_JAM_STATE      LOW
-#define SERVO_CENTER       90  // Default/idle position — straight ahead (servo neutral)
-#define SERVO_CLOSED      160  // Closed position for dispensing gate — 70° from neutral
-#define SERVO_OPEN         70  // Full-open position — 20° from neutral (food falls)
+#define SERVO_CLOSED       90  // Closed position for dispensing gate — straight ahead (servo neutral)
+#define SERVO_OPEN         20  // Full-open position — 70° from neutral (food falls)
 
 // =============================================================================
 //  HTTP OTA CONFIG
@@ -59,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.0.9"
+#define FIRMWARE_VERSION  "1.1.0"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -199,6 +198,14 @@ void startWiFiManager(bool forceConfig = false) {
 // =============================================================================
 //  HELPERS
 // =============================================================================
+
+void openHopper() {
+  feederServo.write(SERVO_OPEN);
+}
+
+void closeHopper() {
+  feederServo.write(SERVO_CLOSED);
+}
 
 /** Single HC-SR04 ping — returns distance in cm, or 0 on timeout. */
 int pingOnce() {
@@ -355,7 +362,7 @@ void dispenseByWeight() {
     // 2. Trickle Feed for Gram-Level Accuracy
     if (remaining > 15.0) {
       // Full speed phase until we are 15g away
-      feederServo.write(SERVO_OPEN);
+      openHopper();
     } else {
       // Trickle phase: very short pulses to drop ~1 kibble at a time.
       // 35ms open, 765ms closed (800ms total cycle).
@@ -363,9 +370,9 @@ void dispenseByWeight() {
       // The long closed period lets the scale settle before the next read.
       unsigned long cycle = (millis() - dispenseStartTime) % 800;
       if (cycle < 35) {
-        feederServo.write(SERVO_OPEN);
+        openHopper();
       } else {
-        feederServo.write(SERVO_CENTER); // Return to center (idle) between trickle pulses
+        closeHopper(); // Return to closed (idle) between trickle pulses
       }
     }
 
@@ -376,9 +383,9 @@ void dispenseByWeight() {
         irBlockStartTime = millis();
       } else if (millis() - irBlockStartTime > jamTimeout) {
         Serial.println("[JAM] Anti-jam sequence triggered.");
-        feederServo.write(SERVO_CENTER); // Return to center before re-opening
+        closeHopper(); // Return to closed before re-opening
         delay(1000);
-        feederServo.write(SERVO_OPEN);
+        openHopper();
         delay(1000);
         
         if (digitalRead(IR_PIN) == IR_JAM_STATE) {
@@ -406,9 +413,9 @@ void dispenseByWeight() {
     delay(50);
   }
 
-  feederServo.write(SERVO_CENTER); // Return servo to center (idle/default) position
+  closeHopper(); // Return servo to closed (idle/default) position
 
-  Serial.println("[Dispense] Servo returned to center — settling...");
+  Serial.println("[Dispense] Servo returned to closed — settling...");
   delay(1500); // Wait for servo to fully close and scale to settle
 
   feederServo.detach(); // Detach again — no more PWM until next dispense
@@ -691,7 +698,7 @@ void setup() {
   ESP32PWM::allocateTimer(3);
   feederServo.setPeriodHertz(50);
   feederServo.attach(SERVO_PIN, 500, 2400);
-  feederServo.write(SERVO_CENTER); // Start at center (90°) — the idle/default position
+  closeHopper(); // Start at CLOSED (90°) — the idle/default position
   // NOTE: If the servo still twitches at the very moment of power-on, that is a
   // hardware bootloader issue. Add a 10 kΩ pull-down resistor on the signal wire
   // to hold the pin LOW before the ESP32 firmware takes control.
