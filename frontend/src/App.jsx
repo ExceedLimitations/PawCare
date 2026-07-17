@@ -120,7 +120,7 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
   }
 
   return (
-    <div className="tactile-card" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+    <div className="tactile-card" style={{ flex: 'none', display: 'flex', flexDirection: 'column' }}>
       <div className="card-header">
         <Clock size={18} />
         <span className="label-caps">FEEDING SCHEDULE</span>
@@ -181,7 +181,7 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
         </div>
       </div>
       
-      <div className="schedule-actions" style={{ marginTop: 'auto' }}>
+      <div className="schedule-actions" style={{ marginTop: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="font-mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             {schedules.filter(s => s.enabled).length} of {schedules.length} active
@@ -1047,7 +1047,7 @@ export default function App() {
                 <span className="label-caps">TODAY</span>
               </div>
               <div className="stat-card-value font-mono">{feedingsToday}</div>
-              <div className="stat-card-subtext">{schedules.length} scheduled</div>
+              <div className="stat-card-subtext">{schedules.filter(s => s.enabled).length} scheduled</div>
             </div>
             
             <div className="tactile-card stat-card-compact">

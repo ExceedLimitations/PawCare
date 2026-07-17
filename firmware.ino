@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.3"
+#define FIRMWARE_VERSION  "1.1.4"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -312,16 +312,18 @@ void dispenseByWeight() {
   // Brief pre-charge pause: lets the 1000µF capacitor refill on the VIN rail
   // before the servo draws inrush current. Reduces voltage sag at startup.
   delay(80);
-  feederServo.write(SERVO_OPEN);
+  // IMPORTANT: Keep servo CLOSED here. Opening immediately would dump food
+  // blindly during the MOTOR_SETTLE_MS window before the scale is readable,
+  // causing a consistent 12-13 g overshoot. Food only flows once the VIN
+  // rail has settled and the scale is actively read inside the loop.
+  feederServo.write(SERVO_CLOSED);
 
   // Motor startup blackout: the servo motor's inrush current (and VIN rail sag)
-  // makes the HX711 read falsely high for up to ~1 s after startup.
-  // Reduced to 600ms to prevent dumping too much kibble blindly.
+  // makes the HX711 read falsely high for up to ~600 ms after attach.
+  // The servo stays CLOSED during this window, so no food falls blindly.
   const unsigned long MOTOR_SETTLE_MS  = 600;
-  // Outlier filter: maximum plausible weight change per loop cycle.
-  // Raised to 60.0g so we don't accidentally reject the genuine weight
-  // of the food that fell during the 600ms blind spot.
-  const float         MAX_WEIGHT_DELTA = 35.0; // grams — tighter to reject bigger VIN-sag spikes
+  // Outlier filter: reject implausibly large single-cycle jumps (VIN sag artefacts).
+  const float         MAX_WEIGHT_DELTA = 35.0; // grams
 
   float         currentWeight      = startingWeight;
   unsigned long irBlockStartTime   = 0;
@@ -360,10 +362,16 @@ void dispenseByWeight() {
       }
     }
 
-    // 2. Trickle Feed for Gram-Level Accuracy
-    if (remaining > 15.0) {
-      // Full speed phase until we are 15g away
-      openHopper();
+    // 2. Phase control: full-speed → trickle
+    if (remaining > 20.0) {
+      // Full-speed phase — but only AFTER the VIN-settle window has elapsed.
+      // Keeping the servo closed during the settle window is what prevents
+      // the 12-13 g blind overshoot that occurred before this fix.
+      if (millis() - dispenseStartTime > MOTOR_SETTLE_MS) {
+        openHopper();
+      } else {
+        closeHopper(); // Hold closed until scale is ready
+      }
     } else {
       // Trickle phase: very short pulses to drop ~1 kibble at a time.
       // 40ms open, 960ms closed (1000ms total cycle).
