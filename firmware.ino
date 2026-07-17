@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.9"
+#define FIRMWARE_VERSION  "1.1.10"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -804,28 +804,29 @@ void loop() {
   // ── Execute Tare (deferred from MQTT callback or button long-hold) ─────────
   if (triggerTare) {
     triggerTare = false;
-    if (scale.is_ready()) {
-      scale.tare();               // Zero the HX711 — takes ~800 ms (safe here in loop)
-      driftOffset         = 0.0;
-      currentBowlWeight   = 0.0;
-      lastDispensedWeight = 0.0;
-      g_tareJustFired     = true; // Flushes the rolling average in the load-cell block
-      g_tareFiredAt       = millis();
-      Serial.println("[TARE] Scale tared OK.");
+    Serial.println("[TARE] Executing deferred tare...");
+    
+    // Do NOT guard this with scale.is_ready(). The HX711 only signals ready 
+    // for a tiny fraction of a second at 10Hz. scale.tare() is a blocking call
+    // that inherently waits for the chip to become ready to take its samples.
+    scale.tare();               // Zero the HX711 — takes ~800 ms (safe here in loop)
+    driftOffset         = 0.0;
+    currentBowlWeight   = 0.0;
+    lastDispensedWeight = 0.0;
+    g_tareJustFired     = true; // Flushes the rolling average in the load-cell block
+    g_tareFiredAt       = millis();
+    Serial.println("[TARE] Scale tared OK.");
 
-      // Triple beep + LED flash as confirmation
-      for (int i = 0; i < 3; i++) {
-        digitalWrite(BUZZER_PIN,     HIGH);
-        digitalWrite(STATUS_LED_PIN, LOW);
-        delay(100);
-        digitalWrite(BUZZER_PIN,     LOW);
-        digitalWrite(STATUS_LED_PIN, HIGH);
-        delay(100);
-      }
-      sendTelemetry(lastValidLevel);
-    } else {
-      Serial.println("[TARE] Scale not ready — tare skipped.");
+    // Triple beep + LED flash as confirmation
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(BUZZER_PIN,     HIGH);
+      digitalWrite(STATUS_LED_PIN, LOW);
+      delay(100);
+      digitalWrite(BUZZER_PIN,     LOW);
+      digitalWrite(STATUS_LED_PIN, HIGH);
+      delay(100);
     }
+    sendTelemetry(lastValidLevel);
   }
 
   // ── Execute Feed ────────────────────────────────────────────────────────────
