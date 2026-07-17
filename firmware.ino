@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.10"
+#define FIRMWARE_VERSION  "1.1.11"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -333,8 +333,12 @@ void dispenseByWeight() {
     float remaining = targetAbsoluteWeight - currentWeight;
 
     // 1. In-Flight Compensation (stop early to account for kibble in the air)
-    // 1.5g: trickle pulses are short so very little kibble is airborne at cutoff.
-    if (remaining <= 1.5) {
+    // Without trickle feed, we must stop significantly early to account for
+    // the ~400ms lag of the HX711 chip + the physical kibble falling through the air.
+    const float IN_FLIGHT_OFFSET_G = 12.0; // Tune this value if it consistently over/undershoots
+    
+    // Safety check: ensure it pours for at least a fraction of a second even for very small targets
+    if (remaining <= IN_FLIGHT_OFFSET_G && (millis() - dispenseStartTime > MOTOR_SETTLE_MS + 200)) {
       Serial.println("[Dispense] Target reached (including in-flight offset).");
       break;
     }
@@ -346,9 +350,8 @@ void dispenseByWeight() {
     }
 
     if (scale.is_ready() && (millis() - dispenseStartTime > MOTOR_SETTLE_MS)) {
-      // Take 3 samples in trickle phase for a more stable reading near target
-      int samples = (remaining <= 15.0) ? 3 : 1;
-      float newWeight = scale.get_units(samples) - driftOffset;
+      // Take 1 sample to read the continuous flow quickly without blocking
+      float newWeight = scale.get_units(1) - driftOffset;
 
       // Outlier filter: reject readings that jump implausibly fast
       if (abs(newWeight - currentWeight) <= MAX_WEIGHT_DELTA) {
@@ -359,23 +362,11 @@ void dispenseByWeight() {
       }
     }
 
-    // 2. Phase control: full-speed → trickle
-    if (remaining > 15.0) {
-      // Full-speed phase — but only AFTER the VIN-settle window has elapsed.
-      if (millis() - dispenseStartTime > MOTOR_SETTLE_MS) {
-        openHopper();
-      } else {
-        closeHopper(); // Hold closed until scale is ready
-      }
+    // 2. Motor Control: Continuous pour until target is reached
+    if (millis() - dispenseStartTime > MOTOR_SETTLE_MS) {
+      openHopper();
     } else {
-      // Trickle phase: very short pulses to drop ~1 kibble at a time.
-      // 40ms open, 960ms closed (1000ms total cycle).
-      unsigned long cycle = (millis() - dispenseStartTime) % 1000;
-      if (cycle < 40) {
-        openHopper();
-      } else {
-        closeHopper(); // Return to closed (idle) between trickle pulses
-      }
+      closeHopper(); // Hold closed until scale is ready and VIN settles
     }
 
     // Jam detection
