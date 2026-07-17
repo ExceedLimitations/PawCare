@@ -49,8 +49,9 @@ const char* mqtt_client_id = "PawCareClient-device01";
 //  SETTINGS & GLOBALS
 // =============================================================================
 #define IR_JAM_STATE      LOW
-#define SERVO_CLOSED      160  // Rest/closed position — exactly 70° from the 90° neutral (right limit of ±70° range)
-#define SERVO_OPEN         70  // Full-open position (degrees) — 20° from the 90° neutral (within ±70° range)
+#define SERVO_CENTER       90  // Default/idle position — straight ahead (servo neutral)
+#define SERVO_CLOSED      160  // Closed position for dispensing gate — 70° from neutral
+#define SERVO_OPEN         70  // Full-open position — 20° from neutral (food falls)
 
 // =============================================================================
 //  HTTP OTA CONFIG
@@ -364,7 +365,7 @@ void dispenseByWeight() {
       if (cycle < 35) {
         feederServo.write(SERVO_OPEN);
       } else {
-        feederServo.write(SERVO_CLOSED);
+        feederServo.write(SERVO_CENTER); // Return to center (idle) between trickle pulses
       }
     }
 
@@ -375,7 +376,7 @@ void dispenseByWeight() {
         irBlockStartTime = millis();
       } else if (millis() - irBlockStartTime > jamTimeout) {
         Serial.println("[JAM] Anti-jam sequence triggered.");
-        feederServo.write(SERVO_CLOSED);
+        feederServo.write(SERVO_CENTER); // Return to center before re-opening
         delay(1000);
         feederServo.write(SERVO_OPEN);
         delay(1000);
@@ -405,9 +406,9 @@ void dispenseByWeight() {
     delay(50);
   }
 
-  feederServo.write(SERVO_CLOSED);
+  feederServo.write(SERVO_CENTER); // Return servo to center (idle/default) position
 
-  Serial.println("[Dispense] Servo stopped — settling...");
+  Serial.println("[Dispense] Servo returned to center — settling...");
   delay(1500); // Wait for servo to fully close and scale to settle
 
   feederServo.detach(); // Detach again — no more PWM until next dispense
@@ -678,8 +679,11 @@ void setup() {
   ESP32PWM::allocateTimer(3);
   feederServo.setPeriodHertz(50);
   feederServo.attach(SERVO_PIN, 500, 2400);
-  feederServo.write(SERVO_CLOSED); // 160° — within ±70° of the 90° neutral position
-  delay(500);          // Give servo time to reach closed position
+  feederServo.write(SERVO_CENTER); // Start at center (90°) — the idle/default position
+  // NOTE: If the servo still twitches at the very moment of power-on, that is a
+  // hardware bootloader issue. Add a 10 kΩ pull-down resistor on the signal wire
+  // to hold the pin LOW before the ESP32 firmware takes control.
+  delay(500);          // Give servo time to reach center
   feederServo.detach(); // Detach so WiFi radio noise can't drive the servo while idle
 
   // ── Load Cell ──────────────────────────────────────────────────────────────
