@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.11"
+#define FIRMWARE_VERSION  "1.1.12"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -335,7 +335,7 @@ void dispenseByWeight() {
     // 1. In-Flight Compensation (stop early to account for kibble in the air)
     // Without trickle feed, we must stop significantly early to account for
     // the ~400ms lag of the HX711 chip + the physical kibble falling through the air.
-    const float IN_FLIGHT_OFFSET_G = 12.0; // Tune this value if it consistently over/undershoots
+    const float IN_FLIGHT_OFFSET_G = 23.0; // Tuned to fix the 11g overshoot observed with 12g offset
     
     // Safety check: ensure it pours for at least a fraction of a second even for very small targets
     if (remaining <= IN_FLIGHT_OFFSET_G && (millis() - dispenseStartTime > MOTOR_SETTLE_MS + 200)) {
