@@ -59,7 +59,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.0.0"
+#define FIRMWARE_VERSION  "1.0.4"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -450,7 +450,15 @@ void publishOtaStatus(const char* status, const char* version = "", const char* 
   if (strlen(error)   > 0) doc["error"]   = error;
   char buf[128];
   serializeJson(doc, buf);
-  client.publish(TOPIC_OTA_STATUS, buf, true); // retained so dashboard sees it on reconnect
+  
+  // Publish live status without retaining it
+  client.publish(TOPIC_OTA_STATUS, buf, false); 
+  
+  // Clear any old retained messages from the broker on terminal states
+  if (strcmp(status, "success") == 0 || strcmp(status, "failed") == 0 || strcmp(status, "up_to_date") == 0) {
+    client.publish(TOPIC_OTA_STATUS, "", true);
+  }
+
   client.loop(); // flush immediately
 }
 
