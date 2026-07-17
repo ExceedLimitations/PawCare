@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.6"
+#define FIRMWARE_VERSION  "1.1.7"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -335,8 +335,9 @@ void dispenseByWeight() {
     float remaining = targetAbsoluteWeight - currentWeight;
 
     // 1. In-Flight Compensation (stop early to account for kibble in the air)
-    // 1.5g: trickle pulses are short so very little kibble is airborne at cutoff.
-    if (remaining <= 1.5) {
+    // 0.5g: since we now only read settled weight in the trickle phase, there
+    // is virtually no airborne kibble when we evaluate the stop condition.
+    if (remaining <= 0.5) {
       Serial.println("[Dispense] Target reached (including in-flight offset).");
       break;
     }
@@ -354,8 +355,13 @@ void dispenseByWeight() {
       // Outlier filter: reject readings that jump implausibly fast
       if (abs(newWeight - currentWeight) <= MAX_WEIGHT_DELTA) {
         if (remaining <= 20.0) {
-          // Apply light EWMA smoothing during trickle phase
-          currentWeight = (0.5 * newWeight) + (0.5 * currentWeight);
+          unsigned long cycle = (millis() - dispenseStartTime) % 1000;
+          // Only update the weight after the kibble has dropped and the scale 
+          // has physically stopped vibrating (cycle > 500ms)
+          if (cycle > 500) {
+            // Apply light EWMA smoothing during trickle phase
+            currentWeight = (0.5 * newWeight) + (0.5 * currentWeight);
+          }
         } else {
           currentWeight = newWeight;
         }
@@ -377,11 +383,12 @@ void dispenseByWeight() {
       }
     } else {
       // Trickle phase: very short pulses to drop ~1 kibble at a time.
-      // 40ms open, 960ms closed (1000ms total cycle).
+      // Pulse width drops to 30ms when very close to target.
       // Longer closed period gives the scale more time to settle before next
       // read, improving gram-level accuracy near the target weight.
       unsigned long cycle = (millis() - dispenseStartTime) % 1000;
-      if (cycle < 40) {
+      unsigned long pulseWidth = (remaining <= 6.0) ? 30 : 40;
+      if (cycle < pulseWidth) {
         openHopper();
       } else {
         closeHopper(); // Return to closed (idle) between trickle pulses

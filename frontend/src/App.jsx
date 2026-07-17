@@ -42,7 +42,7 @@ const HopperSVG = ({ percentage }) => {
 
 // Modern Bowl Visualizer
 const BowlSVG = ({ weight }) => {
-  const percentage = Math.min(100, (weight / 150) * 100);
+  const percentage = Math.min(100, (weight / 200) * 100);
   const fillStatusColor = "var(--status-warning)";
   // y position goes from 45 (empty) to 15 (full)
   const yPos = 45 - (30 * (percentage / 100));
