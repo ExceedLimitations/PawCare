@@ -10,6 +10,8 @@ on:
 jobs:
   compile:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
@@ -69,7 +71,7 @@ jobs:
       # to bump one value in code — version.json stays in sync automatically.
       - name: Sync version.json
         run: |
-          VERSION=$(grep -oP '(?<=#define FIRMWARE_VERSION  ")[^"]+' firmware.ino)
+          VERSION=$(grep -oP '#define\s+FIRMWARE_VERSION\s+"\K[^"]+' firmware.ino)
           echo "Detected firmware version: $VERSION"
           cat > firmware/version.json << EOF
           {
@@ -85,5 +87,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add firmware/firmware.bin firmware/version.json
           # Only commit if something actually changed
-          git diff --staged --quiet || git commit -m "ci: auto-compile firmware v$(grep -oP '(?<=#define FIRMWARE_VERSION  \")[^\"]+' firmware.ino)"
+          git diff --staged --quiet || git commit -m "ci: auto-compile firmware v$(grep -oP '#define\s+FIRMWARE_VERSION\s+"\K[^"]+' firmware.ino)"
           git push
