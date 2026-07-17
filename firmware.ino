@@ -609,6 +609,13 @@ void setup() {
   pinMode(TRIG_PIN,       OUTPUT);
   pinMode(ECHO_PIN,       INPUT);
 
+  // Drive servo pin LOW immediately — before WiFi starts.
+  // Without this, pin 13 floats during the WiFi connection phase and picks up
+  // radio/power-rail noise which the servo interprets as a PWM signal and moves.
+  pinMode(SERVO_PIN,      OUTPUT);
+  digitalWrite(SERVO_PIN, LOW);
+
+
   // ── Load saved MQTT settings from NVS ──────────────────────────────────────
   loadPreferences();
 

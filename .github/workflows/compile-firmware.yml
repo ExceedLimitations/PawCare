@@ -1,0 +1,89 @@
+name: Compile & Deploy Firmware
+
+# Triggers whenever firmware.ino changes on the main branch
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'firmware.ino'
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Use a PAT or the default GITHUB_TOKEN so the bot can push back
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 2. Install arduino-cli ────────────────────────────────────────────────
+      - name: Install arduino-cli
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      # ── 3. Install ESP32 board core ───────────────────────────────────────────
+      - name: Install ESP32 board core
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      # ── 4. Install required libraries ─────────────────────────────────────────
+      - name: Install Arduino libraries
+        run: |
+          arduino-cli lib install "WiFiManager"
+          arduino-cli lib install "PubSubClient"
+          arduino-cli lib install "ArduinoJson"
+          arduino-cli lib install "ESP32Servo"
+          arduino-cli lib install "HX711 Arduino Library"
+          # HTTPUpdate & WiFiClientSecure are bundled with the ESP32 core
+
+      # ── 5. Compile sketch ─────────────────────────────────────────────────────
+      # arduino-cli requires the sketch to sit in a folder with the same name.
+      # We copy firmware.ino into a temp folder to satisfy this requirement.
+      - name: Compile firmware.ino
+        run: |
+          mkdir -p /tmp/firmware_sketch
+          cp firmware.ino /tmp/firmware_sketch/firmware.ino
+          mkdir -p /tmp/build
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32 \
+            --output-dir /tmp/build \
+            /tmp/firmware_sketch
+
+      # ── 6. Copy binary into repo ──────────────────────────────────────────────
+      - name: Copy compiled binary
+        run: |
+          mkdir -p firmware
+          cp /tmp/build/firmware.ino.bin firmware/firmware.bin
+          echo "Binary size: $(du -sh firmware/firmware.bin | cut -f1)"
+
+      # ── 7. Auto-update version.json from FIRMWARE_VERSION in firmware.ino ─────
+      # Reads the #define FIRMWARE_VERSION "x.y.z" line so you only ever need
+      # to bump one value in code — version.json stays in sync automatically.
+      - name: Sync version.json
+        run: |
+          VERSION=$(grep -oP '(?<=#define FIRMWARE_VERSION  ")[^"]+' firmware.ino)
+          echo "Detected firmware version: $VERSION"
+          cat > firmware/version.json << EOF
+          {
+            "version": "$VERSION",
+            "url": "https://pawcare-rcd9.onrender.com/firmware/firmware.bin"
+          }
+          EOF
+
+      # ── 8. Commit & push updated firmware/ back to main ───────────────────────
+      - name: Commit firmware artifacts
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add firmware/firmware.bin firmware/version.json
+          # Only commit if something actually changed
+          git diff --staged --quiet || git commit -m "ci: auto-compile firmware v$(grep -oP '(?<=#define FIRMWARE_VERSION  \")[^\"]+' firmware.ino)"
+          git push
