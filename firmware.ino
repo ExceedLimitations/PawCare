@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.4"
+#define FIRMWARE_VERSION  "1.1.6"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -76,7 +76,8 @@ int   lastValidLevel         = 72;    // hopper fill level (%)
 float currentBowlWeight      = 0.0;   // Keep variable for telemetry
 float driftOffset            = 0.0;   // Auto-Zero Tracking software offset
 bool  triggerDashboardFeed   = false;
-bool  g_tareJustFired        = false;  // set by button tare, consumed by load-cell block
+bool  triggerTare            = false;  // deferred tare — set from MQTT callback or button, executed in loop()
+bool  g_tareJustFired        = false;  // set by any tare, consumed by load-cell block
 unsigned long g_tareFiredAt  = 0;      // millis() timestamp of last tare
 
 unsigned long lastAutoFeedTime = 0;
@@ -347,15 +348,17 @@ void dispenseByWeight() {
     }
 
     if (scale.is_ready() && (millis() - dispenseStartTime > MOTOR_SETTLE_MS)) {
-      // Take 3 samples in trickle phase for a more stable reading near target
-      int samples = (remaining <= 15.0) ? 3 : 1;
-      float newWeight = scale.get_units(samples) - driftOffset;
+      // Always take 1 sample to avoid blocking the loop for ~200ms
+      float newWeight = scale.get_units(1) - driftOffset;
 
-      // Outlier filter: reject readings that jump implausibly fast —
-      // these are caused by VIN rail voltage sag from servo inrush current
-      // corrupting the HX711 ADC. Keep the last known-good value instead.
+      // Outlier filter: reject readings that jump implausibly fast
       if (abs(newWeight - currentWeight) <= MAX_WEIGHT_DELTA) {
-        currentWeight = newWeight;
+        if (remaining <= 20.0) {
+          // Apply light EWMA smoothing during trickle phase
+          currentWeight = (0.5 * newWeight) + (0.5 * currentWeight);
+        } else {
+          currentWeight = newWeight;
+        }
       } else {
         Serial.printf("[Dispense] Scale spike ignored: %.1fg -> %.1fg (delta %.1fg)\n",
                       currentWeight, newWeight, abs(newWeight - currentWeight));
@@ -419,7 +422,9 @@ void dispenseByWeight() {
       sendTelemetry(lastValidLevel);
     }
 
-    delay(50);
+    // Keep a very small delay so we don't hog the CPU, but retain high 
+    // precision for the 40ms open/close cycle check above.
+    delay(2);
   }
 
   closeHopper(); // Return servo to closed (idle/default) position
@@ -589,13 +594,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
     triggerDashboardFeed = true; // Set the flag and exit the callback quickly!
 
   } else if (action == "empty" || action == "tare") {
-    // Bowl was manually emptied via dashboard
-    scale.tare(); // Physically zero out the scale
-    driftOffset          = 0.0;
-    currentBowlWeight    = 0.0;
-    lastDispensedWeight  = 0.0;
-    Serial.println("[CMD] Bowl marked as empty. Scale tared.");
-    sendTelemetry(lastValidLevel);
+    // Defer the actual tare to the main loop — scale.tare() blocks for ~1 s
+    // and must not run inside the MQTT callback (network task context).
+    triggerTare = true;
+    Serial.println("[CMD] Tare requested via MQTT — queued for main loop.");
 
   } else if (action == "ota_update") {
     // Dashboard or remote trigger — queue an immediate OTA check
@@ -784,35 +786,11 @@ void loop() {
     // ── Button just released ────────────────────────────────────────────────
     unsigned long holdDuration = millis() - buttonPressTime;
     buttonHeld = false;
-
     if (tareArmed) {
-      // ── LONG HOLD: tare the scale ─────────────────────────────────────────
-      Serial.println("[BTN] Long hold detected — taring scale.");
-      if (scale.is_ready()) {
-        scale.tare();
-        driftOffset          = 0.0;
-        currentBowlWeight    = 0.0;
-        lastDispensedWeight  = 0.0;
-        Serial.println("[TARE] Scale tared successfully (bowl weight zeroed).");
-
-        g_tareJustFired = true;
-        g_tareFiredAt   = millis();
-
-        // Triple beep + LED flash as confirmation
-        for (int i = 0; i < 3; i++) {
-          digitalWrite(BUZZER_PIN,    HIGH);
-          digitalWrite(STATUS_LED_PIN, LOW);
-          delay(100);
-          digitalWrite(BUZZER_PIN,    LOW);
-          digitalWrite(STATUS_LED_PIN, HIGH);
-          delay(100);
-        }
-
-        sendTelemetry(lastValidLevel); // Update dashboard immediately
-      } else {
-        Serial.println("[TARE] Scale not ready — tare skipped.");
-      }
-      tareArmed = false;
+      // ── LONG HOLD: queue the tare ─────────────────────────────────────────
+      Serial.println("[BTN] Long hold detected — queuing tare.");
+      triggerTare = true; // defer to main loop for safe execution
+      tareArmed   = false;
 
     } else if (holdDuration < TARE_HOLD_MS) {
       // ── SHORT PRESS: manual dispense ─────────────────────────────────────
@@ -830,6 +808,33 @@ void loop() {
   }
 
   lastButtonState = currentButtonState;
+
+  // ── Execute Tare (deferred from MQTT callback or button long-hold) ─────────
+  if (triggerTare) {
+    triggerTare = false;
+    if (scale.is_ready()) {
+      scale.tare();               // Zero the HX711 — takes ~800 ms (safe here in loop)
+      driftOffset         = 0.0;
+      currentBowlWeight   = 0.0;
+      lastDispensedWeight = 0.0;
+      g_tareJustFired     = true; // Flushes the rolling average in the load-cell block
+      g_tareFiredAt       = millis();
+      Serial.println("[TARE] Scale tared OK.");
+
+      // Triple beep + LED flash as confirmation
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(BUZZER_PIN,     HIGH);
+        digitalWrite(STATUS_LED_PIN, LOW);
+        delay(100);
+        digitalWrite(BUZZER_PIN,     LOW);
+        digitalWrite(STATUS_LED_PIN, HIGH);
+        delay(100);
+      }
+      sendTelemetry(lastValidLevel);
+    } else {
+      Serial.println("[TARE] Scale not ready — tare skipped.");
+    }
+  }
 
   // ── Execute Feed ────────────────────────────────────────────────────────────
   if (triggerDashboardFeed) {
