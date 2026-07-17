@@ -26,6 +26,7 @@ char TOPIC_STATUS[80];
 char TOPIC_CMD[80];
 char TOPIC_ALERTS[80];
 char TOPIC_FEED_LOG[80];
+char TOPIC_OTA_STATUS[80]; // Publishes OTA progress to the dashboard
 
 // Unique client-ID — avoids broker kick-outs if multiple devices share the broker
 const char* mqtt_client_id = "PawCareClient-device01";
@@ -116,11 +117,12 @@ void savePreferences() {
 
 /** Build topic strings from the (possibly updated) topic_prefix. */
 void buildTopics() {
-  snprintf(TOPIC_SENSOR, sizeof(TOPIC_SENSOR), "%s/sensor",  topic_prefix);
-  snprintf(TOPIC_STATUS, sizeof(TOPIC_STATUS), "%s/status",  topic_prefix);
-  snprintf(TOPIC_CMD,    sizeof(TOPIC_CMD),    "%s/command", topic_prefix);
-  snprintf(TOPIC_ALERTS, sizeof(TOPIC_ALERTS), "%s/alerts",  topic_prefix);
-  snprintf(TOPIC_FEED_LOG, sizeof(TOPIC_FEED_LOG), "%s/feed_log", topic_prefix);
+  snprintf(TOPIC_SENSOR,     sizeof(TOPIC_SENSOR),     "%s/sensor",     topic_prefix);
+  snprintf(TOPIC_STATUS,     sizeof(TOPIC_STATUS),     "%s/status",     topic_prefix);
+  snprintf(TOPIC_CMD,        sizeof(TOPIC_CMD),        "%s/command",    topic_prefix);
+  snprintf(TOPIC_ALERTS,     sizeof(TOPIC_ALERTS),     "%s/alerts",     topic_prefix);
+  snprintf(TOPIC_FEED_LOG,   sizeof(TOPIC_FEED_LOG),   "%s/feed_log",   topic_prefix);
+  snprintf(TOPIC_OTA_STATUS, sizeof(TOPIC_OTA_STATUS), "%s/ota_status", topic_prefix);
 
   Serial.printf("[MQTT] Topics: sensor=%s  cmd=%s\n", TOPIC_SENSOR, TOPIC_CMD);
 }
@@ -439,8 +441,21 @@ void dispenseByWeight() {
  * If the reported version differs from FIRMWARE_VERSION, downloads and
  * flashes the new binary.  The device reboots automatically on success.
  */
+/** Publish a short OTA status update so the dashboard can show live progress. */
+void publishOtaStatus(const char* status, const char* version = "", const char* error = "") {
+  StaticJsonDocument<128> doc;
+  doc["status"]  = status;
+  if (strlen(version) > 0) doc["version"] = version;
+  if (strlen(error)   > 0) doc["error"]   = error;
+  char buf[128];
+  serializeJson(doc, buf);
+  client.publish(TOPIC_OTA_STATUS, buf, true); // retained so dashboard sees it on reconnect
+  client.loop(); // flush immediately
+}
+
 void checkForOTAUpdate() {
   Serial.println("[OTA] Checking for firmware update...");
+  publishOtaStatus("checking");
 
   WiFiClientSecure secureClient;
   secureClient.setInsecure(); // Skip cert validation — acceptable for private use.
@@ -452,6 +467,7 @@ void checkForOTAUpdate() {
 
   if (code != 200) {
     Serial.printf("[OTA] Version check failed (HTTP %d). Skipping.\n", code);
+    publishOtaStatus("failed", "", ("HTTP " + String(code)).c_str());
     http.end();
     return;
   }
@@ -473,12 +489,14 @@ void checkForOTAUpdate() {
 
   if (remoteVersion == FIRMWARE_VERSION || binUrl.isEmpty()) {
     Serial.println("[OTA] Firmware is up to date.");
+    publishOtaStatus("up_to_date", FIRMWARE_VERSION);
     return;
   }
 
   // New version available — start flashing
   Serial.printf("[OTA] Updating to %s from:\n  %s\n",
                 remoteVersion.c_str(), binUrl.c_str());
+  publishOtaStatus("downloading", remoteVersion.c_str());
 
   // Single long beep: update starting
   digitalWrite(BUZZER_PIN, HIGH); delay(300); digitalWrite(BUZZER_PIN, LOW);
@@ -489,23 +507,27 @@ void checkForOTAUpdate() {
   switch (result) {
     case HTTP_UPDATE_OK:
       Serial.println("[OTA] ✓ Update successful — rebooting.");
+      publishOtaStatus("success", remoteVersion.c_str());
       // Triple beep on success (device reboots immediately after)
       for (int i = 0; i < 3; i++) {
         digitalWrite(BUZZER_PIN, HIGH); delay(80);
         digitalWrite(BUZZER_PIN, LOW);  delay(80);
       }
       break;
-    case HTTP_UPDATE_FAILED:
-      Serial.printf("[OTA] ✗ Update failed: %s\n",
-                    httpUpdate.getLastErrorString().c_str());
+    case HTTP_UPDATE_FAILED: {
+      String errMsg = httpUpdate.getLastErrorString();
+      Serial.printf("[OTA] ✗ Update failed: %s\n", errMsg.c_str());
+      publishOtaStatus("failed", "", errMsg.c_str());
       // Two short beeps: failure
       for (int i = 0; i < 2; i++) {
         digitalWrite(BUZZER_PIN, HIGH); delay(100);
         digitalWrite(BUZZER_PIN, LOW);  delay(100);
       }
       break;
+    }
     case HTTP_UPDATE_NO_UPDATES:
       Serial.println("[OTA] No update needed (server agrees).");
+      publishOtaStatus("up_to_date", FIRMWARE_VERSION);
       break;
   }
 }
@@ -641,10 +663,8 @@ void setup() {
   buildTopics();
 
   // ── HTTP OTA ────────────────────────────────────────────────────────────────
-  // Checks OTA_VERSION_URL every OTA_CHECK_INTERVAL ms (default 6 h).
-  // Can also be triggered instantly via MQTT: {"action":"ota_update"}
-  Serial.printf("[OTA] HTTP OTA ready. Firmware: %s  Check interval: %lu h\n",
-                FIRMWARE_VERSION, OTA_CHECK_INTERVAL / 3600000UL);
+  // Triggered via MQTT: {"action":"ota_update"} from the dashboard.
+  Serial.printf("[OTA] HTTP OTA ready. Firmware: %s  (MQTT-triggered only)\n", FIRMWARE_VERSION);
 
   // ── MQTT ───────────────────────────────────────────────────────────────────
   client.setServer(mqtt_server, mqtt_port);

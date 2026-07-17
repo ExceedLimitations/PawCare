@@ -37,11 +37,12 @@ try {
 /* ─────────────────────────── Config ─────────────────────────── */
 const PORT = process.env.PORT || 3000;
 const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://broker.hivemq.com:1883";
-const TOPIC_STATUS = process.env.MQTT_TOPIC_STATUS || "pawfeed/device01/status";
-const TOPIC_SENSOR = process.env.MQTT_TOPIC_SENSOR || "pawfeed/device01/sensor";
-const TOPIC_CMD    = process.env.MQTT_TOPIC_CMD    || "pawfeed/device01/command";
-const TOPIC_ALERTS = process.env.MQTT_TOPIC_ALERTS || "pawfeed/device01/alerts";
+const TOPIC_STATUS   = process.env.MQTT_TOPIC_STATUS   || "pawfeed/device01/status";
+const TOPIC_SENSOR   = process.env.MQTT_TOPIC_SENSOR   || "pawfeed/device01/sensor";
+const TOPIC_CMD      = process.env.MQTT_TOPIC_CMD      || "pawfeed/device01/command";
+const TOPIC_ALERTS   = process.env.MQTT_TOPIC_ALERTS   || "pawfeed/device01/alerts";
 const TOPIC_FEED_LOG = process.env.MQTT_TOPIC_FEED_LOG || "pawfeed/device01/feed_log";
+const TOPIC_OTA_STATUS = process.env.MQTT_TOPIC_OTA_STATUS || "pawfeed/device01/ota_status";
 
 /* ─────────────────────────── Express ────────────────────────── */
 const app = express();
@@ -440,7 +441,7 @@ const mqttClient = mqtt.connect(MQTT_BROKER, {
 mqttClient.on("connect", () => {
   console.log(`[MQTT] Connected → ${MQTT_BROKER}`);
   console.log(`[MQTT] Topics: status=${TOPIC_STATUS} | sensor=${TOPIC_SENSOR} | cmd=${TOPIC_CMD} | alerts=${TOPIC_ALERTS}`);
-  mqttClient.subscribe([TOPIC_STATUS, TOPIC_SENSOR, TOPIC_ALERTS, TOPIC_FEED_LOG], { qos: 1 });
+  mqttClient.subscribe([TOPIC_STATUS, TOPIC_SENSOR, TOPIC_ALERTS, TOPIC_FEED_LOG, TOPIC_OTA_STATUS], { qos: 1 });
   io.emit("mqtt_status", { connected: true });
 });
 mqttClient.on("reconnect", () => io.emit("mqtt_status", { connected: false }));
@@ -459,6 +460,12 @@ mqttClient.on("message", async (topic, payload) => {
     data = JSON.parse(payload.toString());
   } catch {
     return console.warn("[MQTT] Bad JSON on", topic);
+  }
+
+  if (topic === TOPIC_OTA_STATUS) {
+    console.log(`[OTA] Device status: ${JSON.stringify(data)}`);
+    io.emit("ota_status", data);
+    return;
   }
 
   if (topic === TOPIC_ALERTS) {

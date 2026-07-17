@@ -326,6 +326,7 @@ export default function App() {
   const [deviceConnected, setDeviceConnected] = useState(false);
   const [manualPortion, setManualPortion] = useState(100);
   const [otaUpdating, setOtaUpdating] = useState(false);
+  const [otaStatus, setOtaStatus] = useState(null); // null | {status, version?, error?}
   const deviceTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -378,6 +379,17 @@ export default function App() {
     }
   }, []);
 
+  const handleOtaStatus = useCallback((data) => {
+    setOtaStatus(data);
+    // Auto-clear non-active statuses after 10 s so the banner doesn't linger forever
+    if (data.status === 'up_to_date' || data.status === 'failed' || data.status === 'success') {
+      setTimeout(() => setOtaStatus(null), 10000);
+    }
+    if (data.status === 'success') setOtaUpdating(false);
+    if (data.status === 'failed')  setOtaUpdating(false);
+    if (data.status === 'up_to_date') setOtaUpdating(false);
+  }, []);
+
   const { connected, emit } = useSocket({
     onStatus: handleStatusUpdate,
     onFeedingsToday: d => setFeedingsToday(d.count || 0),
@@ -408,6 +420,7 @@ export default function App() {
       addLog(d.level === 'error' ? 'err' : 'warn', d.message);
       addAlert(d.level === 'error' ? 'error' : 'warning', d.level === 'error' ? 'Fault Detected' : 'System Notice', d.message);
     },
+    onOtaStatus: handleOtaStatus,
     token: localStorage.getItem('pawcare_auth'),
   });
 
@@ -897,6 +910,39 @@ export default function App() {
             <Cpu size={14} />
             {otaUpdating ? 'Update Command Sent...' : 'Update Firmware'}
           </button>
+
+          {/* OTA Status Banner */}
+          {otaStatus && (() => {
+            const cfg = {
+              checking:   { color: 'var(--status-warning)', bg: 'rgba(245,158,11,0.1)', label: '⟳ Checking for update...' },
+              downloading:{ color: '#3B82F6',               bg: 'rgba(59,130,246,0.1)', label: `⬇ Downloading v${otaStatus.version || ''}...` },
+              up_to_date: { color: 'var(--status-ok)',      bg: 'rgba(16,185,129,0.1)', label: `✓ Firmware is up to date (v${otaStatus.version || ''})` },
+              success:    { color: 'var(--status-ok)',      bg: 'rgba(16,185,129,0.1)', label: `✓ Update to v${otaStatus.version || ''} applied — rebooting...` },
+              failed:     { color: 'var(--status-error)',   bg: 'rgba(239,68,68,0.1)',  label: `✗ Update failed: ${otaStatus.error || 'unknown error'}` },
+            }[otaStatus.status] || { color: 'var(--text-muted)', bg: 'transparent', label: otaStatus.status };
+            return (
+              <div style={{
+                marginTop: '8px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                background: cfg.bg,
+                border: `1px solid ${cfg.color}`,
+                color: cfg.color,
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                fontFamily: "'JetBrains Mono', monospace",
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                animation: 'fadeIn 0.3s ease',
+              }}>
+                {(otaStatus.status === 'checking' || otaStatus.status === 'downloading') && (
+                  <Loader2 size={12} style={{ animation: 'spin 1.5s linear infinite', flexShrink: 0 }} />
+                )}
+                {cfg.label}
+              </div>
+            );
+          })()}
         </section>
 
         {/* Middle Column — Charts & Schedules */}

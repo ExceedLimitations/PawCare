@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 
 const IS_DEV = import.meta.env.DEV;
 
-export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, token }) {
+export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, onOtaStatus, token }) {
   const socketRef = useRef(null);
   const [connected, setConnected] = useState(false);
 
@@ -20,6 +20,7 @@ export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, t
     socket.on('feeding_done', onFeedingDone);
     socket.on('alert', onAlert);
     socket.on('feedings_today', onFeedingsToday);
+    socket.on('ota_status', onOtaStatus);
 
     return () => socket.disconnect();
   }, [token]);
