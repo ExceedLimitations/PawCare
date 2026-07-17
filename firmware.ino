@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.2"
+#define FIRMWARE_VERSION  "1.1.3"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -321,7 +321,7 @@ void dispenseByWeight() {
   // Outlier filter: maximum plausible weight change per loop cycle.
   // Raised to 60.0g so we don't accidentally reject the genuine weight
   // of the food that fell during the 600ms blind spot.
-  const float         MAX_WEIGHT_DELTA = 60.0; // grams
+  const float         MAX_WEIGHT_DELTA = 35.0; // grams — tighter to reject bigger VIN-sag spikes
 
   float         currentWeight      = startingWeight;
   unsigned long irBlockStartTime   = 0;
@@ -332,8 +332,8 @@ void dispenseByWeight() {
     float remaining = targetAbsoluteWeight - currentWeight;
 
     // 1. In-Flight Compensation (stop early to account for kibble in the air)
-    // Raised to 3.0g to better account for kibble already airborne during trickle.
-    if (remaining <= 3.0) {
+    // 1.5g: trickle pulses are short so very little kibble is airborne at cutoff.
+    if (remaining <= 1.5) {
       Serial.println("[Dispense] Target reached (including in-flight offset).");
       break;
     }
@@ -366,11 +366,11 @@ void dispenseByWeight() {
       openHopper();
     } else {
       // Trickle phase: very short pulses to drop ~1 kibble at a time.
-      // 35ms open, 765ms closed (800ms total cycle).
-      // Shorter open window means fewer kibbles per pulse and less overshoot.
-      // The long closed period lets the scale settle before the next read.
-      unsigned long cycle = (millis() - dispenseStartTime) % 800;
-      if (cycle < 35) {
+      // 40ms open, 960ms closed (1000ms total cycle).
+      // Longer closed period gives the scale more time to settle before next
+      // read, improving gram-level accuracy near the target weight.
+      unsigned long cycle = (millis() - dispenseStartTime) % 1000;
+      if (cycle < 40) {
         openHopper();
       } else {
         closeHopper(); // Return to closed (idle) between trickle pulses
@@ -835,7 +835,7 @@ void loop() {
   int dist = getDistance(); // median of 3 pings
   static int  sensorFailCount    = 0;
   static bool sensorAlerted      = false;
-  static int  lastValidDist      = 9;  // Assume ~empty on boot
+  static int  lastValidDist      = 2;  // Assume full on boot (sensor timeout = full hopper touching mesh)
   // Change-guard counters: require N consecutive identical conclusions
   // before updating lastValidLevel. Prevents fast-pour turbulence from
   // causing a momentary 0% reading.

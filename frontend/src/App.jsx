@@ -744,6 +744,12 @@ export default function App() {
           <ClockDisplay />
           <span className="nav-divider">|</span>
           <span className="font-mono">SYNC: {lastSyncTime}</span>
+          {fwVersion && (
+            <>
+              <span className="nav-divider">|</span>
+              <span className="font-mono" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }} title="Firmware version">FW v{fwVersion}</span>
+            </>
+          )}
           <span className="nav-divider">|</span>
           <button 
             onClick={handleLogout}
@@ -866,15 +872,6 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="telemetry-item">
-                <div className="telemetry-label">
-                  <div className="telemetry-icon-min"><Cpu size={16} /></div>
-                  Firmware
-                </div>
-                <div className="telemetry-status-minimal font-mono" style={{ color: fwVersion ? 'var(--text-secondary)' : 'var(--text-muted)', fontSize: '0.78rem' }}>
-                  {fwVersion ? `v${fwVersion}` : '—'}
-                </div>
-              </div>
 
             </div>
           </div>
