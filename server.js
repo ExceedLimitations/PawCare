@@ -174,7 +174,7 @@ app.post("/profile", authenticate, async (req, res) => {
 
 /* ── REST: Feeding ─────────────────────────────────────────── */
 app.post("/feed", authenticate, feedLimiter, async (req, res) => {
-  const portion = parseInt(req.body.portion) || 100;
+  const portion = parseInt(req.body.portion) || 45;
   const type = req.body.type || "manual";
   mqttClient.publish(
     TOPIC_CMD,
@@ -361,7 +361,7 @@ app.get("/schedules", authenticate, async (_req, res) => {
 });
 
 app.post("/schedules", authenticate, async (req, res) => {
-  const { label, time, portion_g = 100, days = "daily" } = req.body;
+  const { label, time, portion_g = 45, days = "daily" } = req.body;
   if (!label || !time)
     return res.status(400).json({ error: "label and time required" });
   const entry = { label, time, portion_g, days, enabled: true };
@@ -405,7 +405,7 @@ io.on("connection", async (socket) => {
   console.log(`[Socket.io] Client connected — ${socket.id}`);
 
   socket.on("feed", async (data) => {
-    const portion = parseInt(data?.portion) || 100;
+    const portion = parseInt(data?.portion) || 45;
     const type = data?.type || "manual";
     mqttClient.publish(
       TOPIC_CMD,

@@ -321,10 +321,10 @@ export default function App() {
   const [alerts, setAlerts] = useState([]);
   const [weightDelta, setWeightDelta] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newSchedule, setNewSchedule] = useState({ label: '', time: '08:00', portion_g: 100 });
+  const [newSchedule, setNewSchedule] = useState({ label: '', time: '08:00', portion_g: 45 });
   const [lastSyncTime, setLastSyncTime] = useState('—');
   const [deviceConnected, setDeviceConnected] = useState(false);
-  const [manualPortion, setManualPortion] = useState(100);
+  const [manualPortion, setManualPortion] = useState(45);
   const [otaUpdating, setOtaUpdating] = useState(false);
   const [otaStatus, setOtaStatus] = useState(null); // null | {status, version?, error?}
   const [fwVersion, setFwVersion] = useState(null);  // last known ESP32 firmware version
@@ -405,6 +405,15 @@ export default function App() {
       setLastFed({ time: t, amount: d.portion_g, type: d.type });
       addLog('ok', `${d.type === 'scheduled' ? 'Scheduled' : 'Manual'} dispense — ${d.portion_g}g dispensed at ${t}`);
       setRecentFeedings(p => [d, ...p].slice(0, 50));
+
+      // Add dispense notification to system notifications
+      setStatus(prev => {
+        const bowlW = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
+        const bowlPct = Math.min(100, Math.round((bowlW / 200) * 100));
+        const typeLabel = d.type === 'scheduled' ? 'Scheduled' : d.type === 'physical' ? 'Physical Button' : 'Manual';
+        addAlert('info', 'Food Dispensed', `${typeLabel} dispense — ${d.portion_g}g dispensed. Food bowl is ~${bowlPct}% full.`);
+        return prev;
+      });
       
       // Update weekly chart slightly by assuming today's value incremented
       const todayIso = new Date().toISOString().slice(0, 10);
@@ -450,13 +459,14 @@ export default function App() {
 
     const init = async () => {
       try {
-        const [s, today, sched, recent, weekly, prof] = await Promise.allSettled([
+        const [s, today, sched, recent, weekly, prof, fwManifest] = await Promise.allSettled([
           authFetch('/status').then(r => r.json()),
           authFetch('/feedings/today').then(r => r.json()),
           authFetch('/schedules').then(r => r.json()),
           authFetch('/feedings/recent').then(r => r.json()),
           authFetch('/feedings/weekly').then(r => r.json()),
           authFetch('/profile').then(r => r.json()),
+          fetch('/firmware/version.json').then(r => r.json()),
         ]);
         if (s.status === 'fulfilled' && s.value && !s.value.error) {
           handleStatusUpdate(s.value, false);
@@ -476,6 +486,9 @@ export default function App() {
         }
         if (prof && prof.status === 'fulfilled' && prof.value) {
           setProfile(prof.value);
+        }
+        if (fwManifest && fwManifest.status === 'fulfilled' && fwManifest.value?.version) {
+          setFwVersion(fwManifest.value.version);
         }
       } catch (err) {
         console.warn('Backend connection failed:', err);
@@ -534,7 +547,7 @@ export default function App() {
   };
 
   const handleAddScheduleClick = () => {
-    setNewSchedule({ label: 'Custom Feed', time: '08:00', portion_g: 100 });
+    setNewSchedule({ label: 'Custom Feed', time: '08:00', portion_g: 45 });
     setShowAddModal(true);
   };
 
@@ -1083,7 +1096,7 @@ export default function App() {
                 alerts.map((a) => (
                   <div key={a.id} style={{ display: 'flex', flexDirection: 'column', padding: '12px', borderBottom: '1px solid var(--border)', gap: '4px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: a.type === 'error' ? 'var(--status-error)' : 'var(--status-warning)' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: a.type === 'error' ? 'var(--status-error)' : a.type === 'info' ? 'var(--status-ok)' : 'var(--status-warning)' }}>
                         {a.title}
                       </span>
                       <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{a.time}</span>

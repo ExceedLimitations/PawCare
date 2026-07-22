@@ -58,14 +58,14 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.13"
+#define FIRMWARE_VERSION  "1.1.14"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
 bool triggerOTACheck = false; // set true by MQTT command to trigger a check
 
 float calibration_factor     = 418.95; // Official calibration factor
-int   targetWeight           = 100;   // grams — overridden by portion_g from dashboard
+int   targetWeight           = 45;   // grams — overridden by portion_g from dashboard
 const int   emptyThreshold   = 10;    // % level below which hopper is "empty"
 const int   jamTimeout       = 1500;  // ms IR blocked before jam is declared
 
@@ -786,7 +786,7 @@ void loop() {
     } else if (holdDuration < TARE_HOLD_MS) {
       // ── SHORT PRESS: manual dispense ─────────────────────────────────────
       Serial.println("[BTN] Short press — manual dispense.");
-      targetWeight         = 100;
+      targetWeight         = 45;
       triggerDashboardFeed = true;
 
       StaticJsonDocument<128> doc;
