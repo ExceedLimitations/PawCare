@@ -327,8 +327,10 @@ export default function App() {
   const [manualPortion, setManualPortion] = useState(45);
   const [otaUpdating, setOtaUpdating] = useState(false);
   const [otaStatus, setOtaStatus] = useState(null); // null | {status, version?, error?}
-  const [fwVersion, setFwVersion] = useState(null);  // last known ESP32 firmware version
+  const [deviceFwVersion, setDeviceFwVersion] = useState(null); // version the ESP32 is currently running
+  const [latestFwVersion, setLatestFwVersion] = useState(null); // version available in version.json
   const deviceTimeoutRef = useRef(null);
+  const statusRef = useRef({ food_level: 0, jammed: false, last_dispensed_g: 0, bowl_weight: 0, dispense_success: null });
 
   useEffect(() => {
     return () => {
@@ -362,13 +364,19 @@ export default function App() {
     } else {
       setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
     }
+
+    // Capture device's running firmware version from telemetry
+    if (newStatus.fw_version) setDeviceFwVersion(newStatus.fw_version);
+
     setStatus(prev => {
       const oldWeight = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
       const currentWeight = newStatus.bowl_weight ?? newStatus.last_dispensed_g ?? 0;
       if (oldWeight !== 0 && currentWeight !== oldWeight) {
         setTimeout(() => setWeightDelta(currentWeight - oldWeight), 0);
       }
-      return { ...prev, ...newStatus };
+      const next = { ...prev, ...newStatus };
+      statusRef.current = next;
+      return next;
     });
 
     if (isLive) {
@@ -382,8 +390,10 @@ export default function App() {
 
   const handleOtaStatus = useCallback((data) => {
     setOtaStatus(data);
-    // Capture the version string whenever the device reports it
-    if (data.version) setFwVersion(data.version);
+    // When the device reports its running version via OTA check, capture it
+    if (data.status === 'up_to_date' && data.version) {
+      setDeviceFwVersion(data.version); // 'up_to_date' means device is running this version
+    }
     // Auto-clear non-active statuses after 10 s so the banner doesn't linger forever
     if (data.status === 'up_to_date' || data.status === 'failed' || data.status === 'success') {
       setTimeout(() => setOtaStatus(null), 10000);
@@ -406,14 +416,11 @@ export default function App() {
       addLog('ok', `${d.type === 'scheduled' ? 'Scheduled' : 'Manual'} dispense — ${d.portion_g}g dispensed at ${t}`);
       setRecentFeedings(p => [d, ...p].slice(0, 50));
 
-      // Add dispense notification to system notifications
-      setStatus(prev => {
-        const bowlW = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
-        const bowlPct = Math.min(100, Math.round((bowlW / 200) * 100));
-        const typeLabel = d.type === 'scheduled' ? 'Scheduled' : d.type === 'physical' ? 'Physical Button' : 'Manual';
-        addAlert('info', 'Food Dispensed', `${typeLabel} dispense — ${d.portion_g}g dispensed. Food bowl is ~${bowlPct}% full.`);
-        return prev;
-      });
+      // Add dispense notification using statusRef for live bowl weight (avoids stale closure)
+      const bowlW = Math.max(0, statusRef.current.bowl_weight ?? statusRef.current.last_dispensed_g ?? 0);
+      const bowlPct = Math.min(100, Math.round((bowlW / 200) * 100));
+      const typeLabel = d.type === 'scheduled' ? 'Scheduled' : d.type === 'physical' ? 'Physical Button' : 'Manual';
+      addAlert('info', 'Food Dispensed', `${typeLabel} dispense — ${d.portion_g}g dispensed. Food bowl is ~${bowlPct}% full.`);
       
       // Update weekly chart slightly by assuming today's value incremented
       const todayIso = new Date().toISOString().slice(0, 10);
@@ -488,7 +495,7 @@ export default function App() {
           setProfile(prof.value);
         }
         if (fwManifest && fwManifest.status === 'fulfilled' && fwManifest.value?.version) {
-          setFwVersion(fwManifest.value.version);
+          setLatestFwVersion(fwManifest.value.version);
         }
       } catch (err) {
         console.warn('Backend connection failed:', err);
@@ -738,12 +745,24 @@ export default function App() {
                 {otaCfg.label}
               </div>
             );
-          })() : (
-            <div className={`status-badge ${connected && deviceConnected ? 'online' : 'offline'}`}>
-              <span className="status-dot"></span>
-              {connected && deviceConnected ? 'System Online' : 'System Offline'}
-            </div>
-          )}
+          })() : (() => {
+            // Show "Update Available" if device is connected and running an older version
+            const hasUpdate = connected && deviceConnected && deviceFwVersion && latestFwVersion && deviceFwVersion !== latestFwVersion;
+            if (hasUpdate) {
+              return (
+                <div className="status-badge ota-downloading" style={{ cursor: 'default' }}>
+                  <span className="status-dot" />
+                  Update Available (v{latestFwVersion})
+                </div>
+              );
+            }
+            return (
+              <div className={`status-badge ${connected && deviceConnected ? 'online' : 'offline'}`}>
+                <span className="status-dot"></span>
+                {connected && deviceConnected ? 'System Online' : 'System Offline'}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Center — System Status */}
@@ -757,14 +776,28 @@ export default function App() {
           <ClockDisplay />
           <span className="nav-divider">|</span>
           <span className="font-mono">SYNC: {lastSyncTime}</span>
-          {fwVersion && (
+          {(deviceFwVersion || latestFwVersion) && (
             <>
               <span className="nav-divider">|</span>
-              <span className="font-mono" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }} title="Firmware version">FW v{fwVersion}</span>
+              <span
+                className="font-mono"
+                style={{
+                  fontSize: '0.78rem',
+                  color: deviceFwVersion && latestFwVersion && deviceFwVersion !== latestFwVersion
+                    ? 'var(--status-warning)'
+                    : 'var(--text-muted)',
+                }}
+                title={deviceFwVersion
+                  ? `ESP32 running v${deviceFwVersion}${latestFwVersion && deviceFwVersion !== latestFwVersion ? ` — v${latestFwVersion} available` : ''}`
+                  : `Latest available: v${latestFwVersion}`}
+              >
+                {deviceFwVersion ? `FW v${deviceFwVersion}` : `FW v${latestFwVersion}`}
+                {deviceFwVersion && latestFwVersion && deviceFwVersion !== latestFwVersion && ' ⚠'}
+              </span>
             </>
           )}
           <span className="nav-divider">|</span>
-          <button 
+          <button
             onClick={handleLogout}
             style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '500' }}
           >

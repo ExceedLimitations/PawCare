@@ -516,6 +516,7 @@ mqttClient.on("message", async (topic, payload) => {
       last_dispensed_g: data.last_dispensed_g ?? null,
       dispense_success: data.dispense_success ?? null,
       bowl_weight: data.bowl_weight ?? null,
+      ...(data.fw_version ? { fw_version: data.fw_version } : {}),
     };
     
     try {

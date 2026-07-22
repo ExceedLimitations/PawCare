@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.14"
+#define FIRMWARE_VERSION  "1.1.15"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -260,6 +260,7 @@ void sendTelemetry(int level) {
   doc["last_dispensed_g"]  = lastDispensedWeight;
   doc["dispense_success"]  = lastDispenseSuccessful;
   doc["bowl_weight"]       = currentBowlWeight;
+  doc["fw_version"]        = FIRMWARE_VERSION;
   char buffer[256];
   serializeJson(doc, buffer);
   client.publish(TOPIC_SENSOR, buffer);
@@ -270,11 +271,12 @@ void sendTelemetry(int level) {
 /** Publish a brief online/ready status on first connect so the server knows
  *  the device is alive even before the first sensor cycle. */
 void sendOnlineStatus() {
-  StaticJsonDocument<128> doc;
+  StaticJsonDocument<192> doc;
   doc["food_level"]  = lastValidLevel;
   doc["jammed"]      = systemJammed;
   doc["online"]      = true;
-  char buffer[128];
+  doc["fw_version"]  = FIRMWARE_VERSION;
+  char buffer[192];
   serializeJson(doc, buffer);
   client.publish(TOPIC_STATUS, buffer);
   Serial.println("[MQTT] Online status published.");
@@ -327,7 +329,10 @@ void dispenseByWeight() {
   // In-Flight Compensation (stop early to account for kibble in the air)
   // Without trickle feed, we must stop significantly early to account for
   // the ~400ms lag of the HX711 chip + the physical kibble falling through the air.
-  const float IN_FLIGHT_OFFSET_G = 23.0; // Tuned to fix the 11g overshoot observed with 12g offset
+  // TUNING: Observed ~20g overshoot with 23g offset → raised to 42g.
+  // If you still see overshoot/undershoot after reflashing, adjust this value:
+  //   Still over by Xg → increase by X  |  Under by Xg → decrease by X
+  const float IN_FLIGHT_OFFSET_G = 42.0;
 
   float         currentWeight      = startingWeight;
   unsigned long irBlockStartTime   = 0;
@@ -350,8 +355,8 @@ void dispenseByWeight() {
     }
 
     if (scale.is_ready() && (millis() - dispenseStartTime > MOTOR_SETTLE_MS)) {
-      // Take 1 sample to read the continuous flow quickly without blocking
-      float newWeight = scale.get_units(1) - driftOffset;
+      // Take 2 samples — better noise rejection than 1 without blocking the loop too long
+      float newWeight = scale.get_units(2) - driftOffset;
 
       // Outlier filter: reject readings that jump implausibly fast
       if (abs(newWeight - currentWeight) <= MAX_WEIGHT_DELTA) {
@@ -403,7 +408,7 @@ void dispenseByWeight() {
       sendTelemetry(lastValidLevel);
     }
 
-    delay(50);
+    delay(30); // Reduced from 50ms → faster gate-close reaction
   }
 
   closeHopper(); // Return servo to closed (idle/default) position
