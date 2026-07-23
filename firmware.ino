@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.15"
+#define FIRMWARE_VERSION  "1.1.16"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -842,23 +842,34 @@ void loop() {
   }
 
   // ── Ultrasonic hopper level ─────────────────────────────────────────────────
+  // CALIBRATION: Measure actual distances with a ruler and update these two values.
+  //   HOPPER_FULL_CM  = distance (cm) from sensor to food surface when hopper is full.
+  //                     If food touches the mesh, pings will time out (dist==0) which
+  //                     is handled separately below — set this to the first distance
+  //                     at which you get a stable non-zero reading (~2–4 cm).
+  //   HOPPER_EMPTY_CM = distance (cm) from sensor to the hopper bottom when completely empty.
+  //                     Open the hopper lid, remove all food, and read from Serial Monitor.
+  const int HOPPER_FULL_CM  = 2;   // cm — food at/near the sensor mesh = 100%
+  const int HOPPER_EMPTY_CM = 20;  // cm — adjust to your actual hopper depth!
+
   int dist = getDistance(); // median of 3 pings
   static int  sensorFailCount    = 0;
   static bool sensorAlerted      = false;
-  static int  lastValidDist      = 2;  // Assume full on boot (sensor timeout = full hopper touching mesh)
+  static int  lastValidDist      = HOPPER_FULL_CM; // Assume full on boot
   // Change-guard counters: require N consecutive identical conclusions
-  // before updating lastValidLevel. Prevents fast-pour turbulence from
-  // causing a momentary 0% reading.
-  static int  zeroConfirmCount   = 0;  // consecutive "empty" timeouts
-  static int  fullConfirmCount   = 0;  // consecutive "full" timeouts
-  static const int CONFIRM_NEEDED = 3; // pings needed to commit a state change
+  // before committing a level change. Prevents dispensing turbulence from
+  // causing a momentary 0% spike.
+  static int  zeroConfirmCount   = 0;  // consecutive timeouts leaning toward empty
+  static int  fullConfirmCount   = 0;  // consecutive timeouts leaning toward full
+  static const int CONFIRM_NEEDED = 5; // raised from 3 — needs 5 consecutive timeouts before committing
 
   if (dist == 0) {
-    // Timeout: ambiguous — full (kibble at mesh) OR empty (sound scatters).
-    // Use last known distance to decide, but only commit after CONFIRM_NEEDED
-    // consecutive occurrences so a single turbulence burst is ignored.
-    if (lastValidDist <= 4) {
-      // Was nearly full → likely touching mesh → probably still full
+    // Timeout (dist == 0): two cases —
+    //   A) Food is touching or very close to the sensor mesh → sensor cannot echo → full
+    //   B) Hopper is empty and the angled plastic bottom scatters the pulse → empty
+    // Use the last valid measured distance as a hint.
+    if (lastValidDist <= HOPPER_FULL_CM + 2) {
+      // Last reading was very short = food was near the top = likely still full
       fullConfirmCount++;
       zeroConfirmCount = 0;
       if (fullConfirmCount >= CONFIRM_NEEDED) {
@@ -866,29 +877,31 @@ void loop() {
         fullConfirmCount = CONFIRM_NEEDED; // clamp
       }
     } else {
-      // Was far from sensor → likely empty
+      // Last reading was far away = food was low = lean toward empty, but hold level
+      // until CONFIRM_NEEDED consecutive timeouts confirm it
       zeroConfirmCount++;
       fullConfirmCount = 0;
       if (zeroConfirmCount >= CONFIRM_NEEDED) {
         lastValidLevel = 0;
         zeroConfirmCount = CONFIRM_NEEDED; // clamp
       }
-      // If not yet confirmed, leave lastValidLevel unchanged (hold last good value)
+      // Not yet confirmed — keep displaying the last good level
     }
     sensorFailCount = 0;
     sensorAlerted   = false;
   } else if (dist > 0 && dist < 200) {
-    // Good reading — update immediately, reset confirmation counters
+    // Good reading — map distance to percentage and update immediately
     lastValidDist    = dist;
-    lastValidLevel   = constrain(map(dist, 2, 9, 100, 0), 0, 100);
+    // map(): short distance (food near top) = high %, long distance (food low) = low %
+    lastValidLevel   = constrain(map(dist, HOPPER_FULL_CM, HOPPER_EMPTY_CM, 100, 0), 0, 100);
     zeroConfirmCount = 0;
     fullConfirmCount = 0;
     sensorFailCount  = 0;
     sensorAlerted    = false;
   } else {
+    // Reading is out of expected range (>= 200 cm) — likely electrical noise
     sensorFailCount++;
     if (sensorFailCount >= 15 && !sensorAlerted) {
-      lastValidLevel = 0;
       triggerFlowchartAlert("SENSOR FAULT: Ultrasonic Sensor Error.");
       sensorAlerted = true;
     }

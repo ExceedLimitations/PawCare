@@ -30,7 +30,7 @@ const HopperSVG = ({ percentage }) => {
   const rightX = 65 + 0.125 * h;
 
   return (
-    <svg viewBox="0 0 100 160" className="hopper-svg" style={{width: '60px', height: '120px'}}>
+    <svg viewBox="0 0 100 160" className="hopper-svg" style={{ width: '60px', height: '120px' }}>
       <path d="M 20 20 L 80 20 L 65 140 L 35 140 Z" fill="var(--bg-muted)" />
       <path d={`M ${leftX} ${topY} L ${rightX} ${topY} L 65 140 L 35 140 Z`} fill={fillStatusColor} style={{ transition: 'all 1s cubic-bezier(0.4, 0, 0.2, 1)' }} />
       <path d="M 20 20 L 80 20 L 65 140 L 35 140 Z" fill="none" stroke="var(--border-dark)" strokeWidth="3" strokeLinejoin="round" />
@@ -48,26 +48,26 @@ const BowlSVG = ({ weight }) => {
   const yPos = 45 - (30 * (percentage / 100));
 
   return (
-    <svg viewBox="0 -3 100 60" className="bowl-svg" style={{width: '70px', height: '42px'}}>
+    <svg viewBox="0 -3 100 60" className="bowl-svg" style={{ width: '70px', height: '42px' }}>
       <defs>
         <clipPath id="bowl-clip-inner">
           <path d="M 15 15 C 15 45, 85 45, 85 15 Z" />
         </clipPath>
       </defs>
       <path d="M 10 10 C 10 50, 90 50, 90 10 Z" fill="var(--bg-muted)" />
-      
+
       {percentage > 0 && (
-        <rect 
-          x="10" 
-          y={yPos} 
-          width="80" 
-          height="40" 
-          fill={fillStatusColor} 
+        <rect
+          x="10"
+          y={yPos}
+          width="80"
+          height="40"
+          fill={fillStatusColor}
           clipPath="url(#bowl-clip-inner)"
           style={{ transition: 'y 1s cubic-bezier(0.4, 0, 0.2, 1)' }}
         />
       )}
-      
+
       <path d="M 10 10 C 10 50, 90 50, 90 10 Z" fill="none" stroke="var(--border-dark)" strokeWidth="3" strokeLinejoin="round" />
       <ellipse cx="50" cy="10" rx="40" ry="6" fill="none" stroke="var(--border-dark)" strokeWidth="3" />
     </svg>
@@ -125,7 +125,7 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
         <Clock size={18} />
         <span className="label-caps">FEEDING SCHEDULE</span>
       </div>
-      
+
       <div className="timeline-axis-wrapper">
         <div className="timeline-line">
           {[0, 4, 8, 12, 16, 20, 24].map(h => {
@@ -142,14 +142,14 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
             const pct = getTimelinePosition(s.time);
             const [sh, sm] = s.time.split(':').map(Number);
             const sMinutes = sh * 60 + sm;
-            
+
             let state = 'upcoming';
             if (!s.enabled) {
               state = 'disabled';
             } else if (sMinutes < currentMinutes) {
               const startOfDay = new Date();
-              startOfDay.setHours(0,0,0,0);
-              
+              startOfDay.setHours(0, 0, 0, 0);
+
               const wasDispensed = recentFeedings.some(f => {
                 const fedTime = new Date(f.timestamp);
                 return fedTime >= startOfDay && f.type === 'scheduled' && f.label === s.label;
@@ -161,8 +161,8 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
             const isNext = s.id === nextUpcomingId;
 
             return (
-              <div 
-                key={s.id} 
+              <div
+                key={s.id}
                 className="timeline-marker-wrapper"
                 style={{ left: `${pct}%` }}
               >
@@ -180,7 +180,7 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
           })}
         </div>
       </div>
-      
+
       <div className="schedule-actions" style={{ marginTop: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="font-mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
@@ -202,7 +202,7 @@ const Login = ({ onLogin }) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    
+
     try {
       const res = await fetch('/login', {
         method: 'POST',
@@ -210,7 +210,7 @@ const Login = ({ onLogin }) => {
         body: JSON.stringify({ username, password })
       });
       const data = await res.json();
-      
+
       if (data.success) {
         localStorage.setItem('pawcare_auth', data.token);
         onLogin(true);
@@ -233,16 +233,16 @@ const Login = ({ onLogin }) => {
           <h1 className="font-serif" style={{ fontSize: '1.5rem', marginBottom: '8px' }}>PawCare Platform</h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Sign in to access telemetry</p>
         </div>
-        
+
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {error && <div style={{ color: 'var(--status-error)', backgroundColor: '#FEF2F2', padding: '12px', borderRadius: '8px', fontSize: '0.85rem', textAlign: 'center', fontWeight: '500' }}>{error}</div>}
-          
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <label className="label-caps">Username</label>
             <div style={{ position: 'relative' }}>
               <User size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-light)' }} />
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="admin"
@@ -251,13 +251,13 @@ const Login = ({ onLogin }) => {
               />
             </div>
           </div>
-          
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <label className="label-caps">Password</label>
             <div style={{ position: 'relative' }}>
               <Lock size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-light)' }} />
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="••••••••"
@@ -266,7 +266,7 @@ const Login = ({ onLogin }) => {
               />
             </div>
           </div>
-          
+
           <button type="submit" className="btn-primary" style={{ marginTop: '8px' }} disabled={loading}>
             {loading ? <Loader2 size={18} style={{ animation: 'spin 1.5s linear infinite' }} /> : 'Sign In'}
           </button>
@@ -399,7 +399,7 @@ export default function App() {
       setTimeout(() => setOtaStatus(null), 10000);
     }
     if (data.status === 'success') setOtaUpdating(false);
-    if (data.status === 'failed')  setOtaUpdating(false);
+    if (data.status === 'failed') setOtaUpdating(false);
     if (data.status === 'up_to_date') setOtaUpdating(false);
   }, []);
 
@@ -413,16 +413,26 @@ export default function App() {
       setTimeout(() => setDispenseSuccess(false), 3000);
       const t = new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
       setLastFed({ time: t, amount: d.portion_g, type: d.type });
-      addLog('ok', `${d.type === 'scheduled' ? 'Scheduled' : 'Manual'} dispense — ${d.portion_g}g dispensed at ${t}`);
+      const typeLabel = d.type === 'scheduled'
+        ? (d.label ? `Scheduled (${d.label})` : 'Scheduled')
+        : d.type === 'physical' ? 'Physical Button' : 'Manual';
+      addLog('ok', `${typeLabel} dispense — ${d.portion_g}g dispensed at ${t}`);
       setRecentFeedings(p => [d, ...p].slice(0, 50));
 
-      // Add dispense notification using statusRef for live bowl weight (avoids stale closure)
+      // Add in-app notification using statusRef for live bowl weight (avoids stale closure)
       const bowlW = Math.max(0, statusRef.current.bowl_weight ?? statusRef.current.last_dispensed_g ?? 0);
       const bowlPct = Math.min(100, Math.round((bowlW / 200) * 100));
-      const typeLabel = d.type === 'scheduled' ? 'Scheduled' : d.type === 'physical' ? 'Physical Button' : 'Manual';
-      addAlert('info', 'Food Dispensed', `${typeLabel} dispense — ${d.portion_g}g dispensed. Food bowl is ~${bowlPct}% full.`);
-      
-      // Update weekly chart slightly by assuming today's value incremented
+      const notifTitle = 'Food Dispensed';
+      const notifBody = `${typeLabel} — ${d.portion_g}g dispensed at ${t}. Bowl is ~${bowlPct}% full.`;
+      addAlert('info', notifTitle, notifBody);
+
+      // Native browser/OS desktop notification (works when tab is in background)
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try { new Notification(notifTitle, { body: notifBody, icon: '/favicon.ico' }); }
+        catch (e) { console.warn('[Notification] Native push failed:', e); }
+      }
+
+      // Update weekly chart
       const todayIso = new Date().toISOString().slice(0, 10);
       setWeeklyFeedings(prev => {
         const next = [...prev];
@@ -503,6 +513,11 @@ export default function App() {
     };
     init();
 
+    // Request permission for native browser notifications (once, non-blocking)
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+
   }, [handleStatusUpdate, isAuthenticated]);
 
   const triggerManualDispense = () => {
@@ -511,7 +526,7 @@ export default function App() {
     setDispenseSuccess(false);
     emit('feed', { portion: manualPortion, type: 'manual' });
     addLog('info', `Manual dispense triggered — ${manualPortion}g requested to ESP32`);
-    
+
     // Safety timeout to release button lock if ESP32 never responds
     setTimeout(() => {
       setFeeding(false);
@@ -534,14 +549,14 @@ export default function App() {
   };
 
   const toggleSchedule = (id, enabled) => {
-    authFetch(`/schedules/${id}`, { 
-      method: 'PATCH', 
-      body: JSON.stringify({ enabled }) 
+    authFetch(`/schedules/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled })
     })
-    .then(() => {
-      setSchedules(p => p.map(s => s.id === id ? { ...s, enabled } : s));
-      addLog('info', `Schedule slot ${enabled ? 'enabled' : 'disabled'}`);
-    });
+      .then(() => {
+        setSchedules(p => p.map(s => s.id === id ? { ...s, enabled } : s));
+        addLog('info', `Schedule slot ${enabled ? 'enabled' : 'disabled'}`);
+      });
   };
 
   const deleteSchedule = (id) => {
@@ -559,29 +574,29 @@ export default function App() {
   };
 
   const saveNewSchedule = () => {
-    authFetch('/schedules', { 
-      method: 'POST', 
-      body: JSON.stringify({ 
-        label: newSchedule.label || 'Custom Slot', 
-        time: newSchedule.time, 
-        portion_g: newSchedule.portion_g, 
-        days: 'daily' 
-      }) 
+    authFetch('/schedules', {
+      method: 'POST',
+      body: JSON.stringify({
+        label: newSchedule.label || 'Custom Slot',
+        time: newSchedule.time,
+        portion_g: newSchedule.portion_g,
+        days: 'daily'
+      })
     })
-    .then(r => r.json())
-    .then(s => {
-      if (s.id) {
-        setSchedules(p => [...p, s]);
-        setShowAddModal(false);
-        addLog('ok', `Added new schedule slot: ${s.label} at ${s.time}`);
-      }
-    });
+      .then(r => r.json())
+      .then(s => {
+        if (s.id) {
+          setSchedules(p => [...p, s]);
+          setShowAddModal(false);
+          addLog('ok', `Added new schedule slot: ${s.label} at ${s.time}`);
+        }
+      });
   };
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -731,11 +746,11 @@ export default function App() {
           </div>
           {otaStatus ? (() => {
             const otaCfg = {
-              checking:    { cls: 'ota-checking',    dot: 'spin',   label: 'Checking Update...' },
-              downloading: { cls: 'ota-downloading', dot: 'spin',   label: `Downloading v${otaStatus.version || ''}...` },
-              up_to_date:  { cls: 'ota-ok',          dot: 'static', label: `Up to Date (v${otaStatus.version || ''})` },
-              success:     { cls: 'ota-ok',          dot: 'static', label: `Updated to v${otaStatus.version || ''} — Rebooting` },
-              failed:      { cls: 'ota-failed',      dot: 'static', label: `Update Failed` },
+              checking: { cls: 'ota-checking', dot: 'spin', label: 'Checking Update...' },
+              downloading: { cls: 'ota-downloading', dot: 'spin', label: `Downloading v${otaStatus.version || ''}...` },
+              up_to_date: { cls: 'ota-ok', dot: 'static', label: `Up to Date (v${otaStatus.version || ''})` },
+              success: { cls: 'ota-ok', dot: 'static', label: `Updated to v${otaStatus.version || ''} — Rebooting` },
+              failed: { cls: 'ota-failed', dot: 'static', label: `Update Failed` },
             }[otaStatus.status] || { cls: 'ota-checking', dot: 'static', label: otaStatus.status };
             return (
               <div className={`status-badge ${otaCfg.cls}`}>
@@ -808,10 +823,10 @@ export default function App() {
 
       {/* Main Grid Layout */}
       <main className="dashboard-layout">
-        
+
         {/* Left Column — Device & Metrics */}
         <section className="left-column">
-          
+
           <div className="tactile-card profile-card-enhanced" style={{ position: 'relative' }}>
             <div className={`profile-avatar${profile ? '' : ' skeleton'}`}>
               {profile && <img src={profile.avatar || petAvatar} alt="Pet Avatar" />}
@@ -830,7 +845,7 @@ export default function App() {
                 </span>
               </div>
             </div>
-            <button 
+            <button
               onClick={() => {
                 setEditProfile({ name: profile?.name || '', breed: profile?.breed || '', birthday: profile?.birthday || '', age: profile?.age ?? '', avatar: profile?.avatar || null });
                 setShowProfileModal(true);
@@ -873,7 +888,7 @@ export default function App() {
               <span className="label-caps">DEVICE TELEMETRY</span>
             </div>
             <div className="telemetry-list">
-              
+
               <div className="telemetry-item">
                 <div className="telemetry-label">
                   <div className="telemetry-icon-min"><Cpu size={16} /></div>
@@ -924,8 +939,8 @@ export default function App() {
 
           <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
             <div className="tactile-card" style={{ flex: '0 0 auto', padding: '0 12px', display: 'flex', alignItems: 'center', margin: 0 }}>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 value={manualPortion}
                 onChange={(e) => setManualPortion(Math.max(1, parseInt(e.target.value) || 10))}
                 style={{ width: '45px', background: 'transparent', border: 'none', color: 'var(--text-main)', fontSize: '1.1rem', textAlign: 'right', outline: 'none', padding: 0 }}
@@ -933,27 +948,27 @@ export default function App() {
               />
               <span className="font-mono" style={{ color: 'var(--text-muted)', marginLeft: '4px' }}>g</span>
             </div>
-            <button 
+            <button
               className={`btn-primary ${dispenseSuccess ? 'success-state' : ''}`}
               style={{ flex: 1, margin: 0 }}
               onClick={triggerManualDispense}
               disabled={feeding || (!connected || !deviceConnected)}
             >
               {feeding ? (
-              <>
-                <Loader2 size={18} style={{ animation: 'spin 1.5s linear infinite' }} />
-                <span>Command Sent...</span>
-              </>
-            ) : dispenseSuccess ? (
-              <>
-                <CheckCircle size={18} />
-                <span>Dispense Confirmed!</span>
-              </>
-            ) : (
-              <>
-                <Activity size={18} />
-                <span>Manual Dispense</span>
-              </>
+                <>
+                  <Loader2 size={18} style={{ animation: 'spin 1.5s linear infinite' }} />
+                  <span>Command Sent...</span>
+                </>
+              ) : dispenseSuccess ? (
+                <>
+                  <CheckCircle size={18} />
+                  <span>Dispense Confirmed!</span>
+                </>
+              ) : (
+                <>
+                  <Activity size={18} />
+                  <span>Manual Dispense</span>
+                </>
               )}
             </button>
           </div>
@@ -1034,8 +1049,8 @@ export default function App() {
             </div>
           </div>
 
-          <FeedingTimeline 
-            schedules={schedules} 
+          <FeedingTimeline
+            schedules={schedules}
             recentFeedings={recentFeedings}
             onManageSchedules={handleAddScheduleClick}
           />
@@ -1046,15 +1061,15 @@ export default function App() {
                 <Settings2 size={18} />
                 <span className="label-caps">MANAGE SCHEDULES</span>
               </div>
-              <button 
-                className="btn-secondary" 
+              <button
+                className="btn-secondary"
                 style={{ backgroundColor: 'var(--text-main)', color: 'white', borderColor: 'var(--text-main)' }}
                 onClick={handleAddScheduleClick}
               >
                 + Add Schedule
               </button>
             </div>
-            
+
             <div className="management-list" style={{ overflowY: 'auto', maxHeight: '185px' }}>
               {schedules.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-light)' }} className="font-mono">
@@ -1064,14 +1079,14 @@ export default function App() {
                 schedules.map(s => (
                   <div key={s.id} className="management-item">
                     <span className="management-info font-mono">
-                      <strong>{s.label}</strong> <span style={{color: 'var(--border-dark)'}}>|</span> {s.portion_g}g <span style={{color: 'var(--border-dark)'}}>|</span> {s.time}
+                      <strong>{s.label}</strong> <span style={{ color: 'var(--border-dark)' }}>|</span> {s.portion_g}g <span style={{ color: 'var(--border-dark)' }}>|</span> {s.time}
                     </span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
                       <label className="toggle">
-                        <input 
-                          type="checkbox" 
-                          checked={s.enabled} 
-                          onChange={e => toggleSchedule(s.id, e.target.checked)} 
+                        <input
+                          type="checkbox"
+                          checked={s.enabled}
+                          onChange={e => toggleSchedule(s.id, e.target.checked)}
                         />
                         <span className="toggle-track" />
                       </label>
@@ -1095,7 +1110,7 @@ export default function App() {
               <div className="stat-card-value font-mono">{feedingsToday}</div>
               <div className="stat-card-subtext">{schedules.filter(s => s.enabled).length} scheduled</div>
             </div>
-            
+
             <div className="tactile-card stat-card-compact">
               <div className="card-header" style={{ marginBottom: 12 }}>
                 <CalendarDays size={16} />
@@ -1189,7 +1204,7 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-title font-serif">Edit Profile</div>
-            
+
             <div className="form-group" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '24px' }}>
               <div style={{ position: 'relative', width: '100px', height: '100px', borderRadius: '50%', overflow: 'hidden', border: '3px solid var(--border)', marginBottom: '12px' }}>
                 <img src={editProfile.avatar || profile?.avatar || petAvatar} alt="Avatar Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -1200,26 +1215,26 @@ export default function App() {
               </div>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Click to upload photo</span>
             </div>
-            
+
             <div className="form-group">
               <label className="form-label">Pet Name</label>
-              <input 
-                type="text" 
-                className="form-input" 
-                value={editProfile.name} 
-                onChange={e => setEditProfile({ ...editProfile, name: e.target.value })} 
-                placeholder="e.g. Bantay" 
+              <input
+                type="text"
+                className="form-input"
+                value={editProfile.name}
+                onChange={e => setEditProfile({ ...editProfile, name: e.target.value })}
+                placeholder="e.g. Bantay"
               />
             </div>
-            
+
             <div className="form-group">
               <label className="form-label">Breed / Subtitle</label>
-              <input 
-                type="text" 
-                className="form-input" 
-                value={editProfile.breed} 
-                onChange={e => setEditProfile({ ...editProfile, breed: e.target.value })} 
-                placeholder="e.g. Golden Retriever" 
+              <input
+                type="text"
+                className="form-input"
+                value={editProfile.breed}
+                onChange={e => setEditProfile({ ...editProfile, breed: e.target.value })}
+                placeholder="e.g. Golden Retriever"
               />
             </div>
 
@@ -1250,11 +1265,11 @@ export default function App() {
                 />
               </div>
             </div>
-            
+
             <div className="modal-footer">
               <button className="btn-secondary" onClick={() => setShowProfileModal(false)}>Cancel</button>
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 style={{ width: 'auto', padding: '10px 24px' }}
                 onClick={saveProfile}
               >
@@ -1269,42 +1284,42 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-title font-serif">Add Feeding Schedule</div>
-            
+
             <div className="form-group">
               <label className="form-label">Slot Label</label>
-              <input 
-                type="text" 
-                className="form-input" 
-                value={newSchedule.label} 
-                onChange={e => setNewSchedule({ ...newSchedule, label: e.target.value })} 
-                placeholder="e.g. Breakfast" 
+              <input
+                type="text"
+                className="form-input"
+                value={newSchedule.label}
+                onChange={e => setNewSchedule({ ...newSchedule, label: e.target.value })}
+                placeholder="e.g. Breakfast"
               />
             </div>
-            
+
             <div className="form-group">
               <label className="form-label">Time</label>
-              <input 
-                type="time" 
-                className="form-input" 
-                value={newSchedule.time} 
-                onChange={e => setNewSchedule({ ...newSchedule, time: e.target.value })} 
+              <input
+                type="time"
+                className="form-input"
+                value={newSchedule.time}
+                onChange={e => setNewSchedule({ ...newSchedule, time: e.target.value })}
               />
             </div>
-            
+
             <div className="form-group">
               <label className="form-label">Portion Size (grams)</label>
-              <input 
-                type="number" 
-                className="form-input" 
-                value={newSchedule.portion_g} 
-                onChange={e => setNewSchedule({ ...newSchedule, portion_g: parseInt(e.target.value) || 100 })} 
+              <input
+                type="number"
+                className="form-input"
+                value={newSchedule.portion_g}
+                onChange={e => setNewSchedule({ ...newSchedule, portion_g: parseInt(e.target.value) || 100 })}
               />
             </div>
-            
+
             <div className="modal-footer">
               <button className="btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 style={{ width: 'auto', padding: '10px 24px' }}
                 onClick={saveNewSchedule}
               >
@@ -1314,7 +1329,7 @@ export default function App() {
           </div>
         </div>
       )}
-      
+
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
