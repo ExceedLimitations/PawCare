@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.17"
+#define FIRMWARE_VERSION  "1.1.18"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -68,6 +68,15 @@ float calibration_factor     = 418.95; // Official calibration factor
 int   targetWeight           = 45;   // grams — overridden by portion_g from dashboard
 const int   emptyThreshold   = 10;    // % level below which hopper is "empty"
 const int   jamTimeout       = 1500;  // ms IR blocked before jam is declared
+
+// ── Ultrasonic sensor calibration ──────────────────────────────────────────────
+// HOPPER_FULL_CM  = distance (cm) from sensor to food surface when hopper is FULL.
+//                   Food touching the mesh causes timeouts (dist==0), handled separately.
+//                   Set this to the first stable non-zero reading you see when full (~2-4 cm).
+// HOPPER_EMPTY_CM = distance (cm) from sensor to hopper bottom when COMPLETELY EMPTY.
+//                   Remove all food, open lid, read from Serial Monitor, update this value.
+#define HOPPER_FULL_CM   2    // cm — 100% level
+#define HOPPER_EMPTY_CM  20   // cm — 0% level (adjust to your actual hopper depth!)
 
 bool  systemJammed           = false;
 float lastDispensedWeight    = 0.0;
@@ -307,7 +316,7 @@ void dispenseByWeight() {
   if (scale.is_ready()) {
     startingWeight = scale.get_units(10) - driftOffset; // 10 samples for stable baseline
   }
-  float targetAbsoluteWeight = startingWeight + (float)targetWeight;
+  float targetAbsoluteWeight __attribute__((unused)) = startingWeight + (float)targetWeight; // kept for reference, unused in two-phase logic
 
   // ── Servo init ───────────────────────────────────────────────────────────────
   feederServo.write(SERVO_CLOSED);
@@ -338,6 +347,7 @@ void dispenseByWeight() {
   unsigned long dispenseStartTime = millis();
   bool          isIrBlocked       = false;
   bool          isTrickling       = false;  // true once we enter Phase 2
+  unsigned long lastDispenseTelemetry = 0;  // reset each call so telemetry fires promptly
 
   // ── Dispense loop ────────────────────────────────────────────────────────────
   while (true) {
@@ -356,9 +366,13 @@ void dispenseByWeight() {
     }
 
     // ── Stop condition ─────────────────────────────────────────────────────
+    // In bulk phase: only allow stop after a minimum dispense window (500ms past settle)
+    // to prevent scale noise from tripping the exit before food has actually fallen.
+    const unsigned long MIN_DISPENSE_MS = MOTOR_SETTLE_MS + 500;
     float stopOffset = isTrickling ? IN_FLIGHT_TRICKLE_G : 0.0f;
     bool  scaleReady = millis() - dispenseStartTime > MOTOR_SETTLE_MS;
-    if (scaleReady && remaining <= stopOffset) {
+    bool  minTimeOk  = millis() - dispenseStartTime > MIN_DISPENSE_MS;
+    if (scaleReady && minTimeOk && remaining <= stopOffset) {
       Serial.printf("[Dispense] Target reached — dispensed %.1fg\n", dispensed);
       break;
     }
@@ -419,7 +433,6 @@ void dispenseByWeight() {
     client.loop(); // Keep MQTT alive
 
     // Periodically push live telemetry so dashboard stays current
-    static unsigned long lastDispenseTelemetry = 0;
     if (millis() - lastDispenseTelemetry > 3000) {
       lastDispenseTelemetry = millis();
       currentBowlWeight = currentWeight;
@@ -809,13 +822,7 @@ void loop() {
       Serial.println("[BTN] Short press — manual dispense.");
       targetWeight         = 45;
       triggerDashboardFeed = true;
-
-      StaticJsonDocument<128> doc;
-      doc["portion_g"] = targetWeight;
-      doc["type"]      = "physical";
-      char buffer[128];
-      serializeJson(doc, buffer);
-      client.publish(TOPIC_FEED_LOG, buffer);
+      // NOTE: feed log is published AFTER dispenseByWeight() completes (see Execute Feed block)
     }
   }
 
@@ -855,18 +862,21 @@ void loop() {
     digitalWrite(ALERT_LED_PIN, LOW);
     dispenseByWeight();
     triggerDashboardFeed = false; // Reset flag after dispensing
+
+    // Publish feed log AFTER dispense so it reflects the actual outcome,
+    // not a pre-emptive log that could be wrong if a jam or timeout occurred.
+    StaticJsonDocument<128> feedDoc;
+    feedDoc["portion_g"] = lastDispensedWeight > 0 ? (int)round(lastDispensedWeight) : targetWeight;
+    feedDoc["type"]      = "physical"; // covers both button and dashboard triggers
+    char feedBuf[128];
+    serializeJson(feedDoc, feedBuf);
+    client.publish(TOPIC_FEED_LOG, feedBuf);
   }
 
   // ── Ultrasonic hopper level ─────────────────────────────────────────────────
-  // CALIBRATION: Measure actual distances with a ruler and update these two values.
-  //   HOPPER_FULL_CM  = distance (cm) from sensor to food surface when hopper is full.
-  //                     If food touches the mesh, pings will time out (dist==0) which
-  //                     is handled separately below — set this to the first distance
-  //                     at which you get a stable non-zero reading (~2–4 cm).
-  //   HOPPER_EMPTY_CM = distance (cm) from sensor to the hopper bottom when completely empty.
-  //                     Open the hopper lid, remove all food, and read from Serial Monitor.
-  const int HOPPER_FULL_CM  = 2;   // cm — food at/near the sensor mesh = 100%
-  const int HOPPER_EMPTY_CM = 20;  // cm — adjust to your actual hopper depth!
+  // Calibration constants are defined at the top of the file as:
+  //   #define HOPPER_FULL_CM  2   (adjust if needed)
+  //   #define HOPPER_EMPTY_CM 20  (measure your hopper depth and update)
 
   int dist = getDistance(); // median of 3 pings
   static int  sensorFailCount    = 0;

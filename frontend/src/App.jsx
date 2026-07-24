@@ -523,7 +523,13 @@ export default function App() {
           setLatestFwVersion(fwManifest.value.version);
         }
         if (notifs && notifs.status === 'fulfilled' && Array.isArray(notifs.value)) {
-          setAlerts(notifs.value);
+          // Merge with any optimistic adds that fired before this fetch completed.
+          // Deduplicate by id — server copy wins (it has the authoritative timestamp).
+          setAlerts(prev => {
+            const serverIds = new Set(notifs.value.map(n => n.id));
+            const localOnly = prev.filter(n => !serverIds.has(n.id));
+            return [...notifs.value, ...localOnly];
+          });
         }
       } catch (err) {
         console.warn('Backend connection failed:', err);
