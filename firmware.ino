@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.16"
+#define FIRMWARE_VERSION  "1.1.17"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -291,7 +291,7 @@ void sendOnlineStatus() {
  * Performs active jam detection via the IR sensor.
  */
 void dispenseByWeight() {
-  Serial.printf("[Dispense] Target: %dg  — Activating servo (weight-based)...\n", targetWeight);
+  Serial.printf("[Dispense] Target: %dg  — starting two-phase dispense...\n", targetWeight);
 
   // Play double beep before dispensing
   for (int i = 0; i < 2; i++) {
@@ -301,91 +301,109 @@ void dispenseByWeight() {
     delay(100);
   }
 
-  // Read the baseline weight BEFORE attaching the servo.
-  // This avoids HX711 noise from the motor's inrush current corrupting the baseline.
+  // ── Baseline weight ──────────────────────────────────────────────────────────
+  // Read BEFORE attaching servo to avoid HX711 noise from motor inrush current.
   float startingWeight = currentBowlWeight;
   if (scale.is_ready()) {
-    startingWeight = scale.get_units(5) - driftOffset; // 5 samples for a stable baseline
+    startingWeight = scale.get_units(10) - driftOffset; // 10 samples for stable baseline
   }
-  float targetAbsoluteWeight = startingWeight + targetWeight;
+  float targetAbsoluteWeight = startingWeight + (float)targetWeight;
 
-  // Re-attach servo just before use. Write CLOSED first so it doesn't jump.
+  // ── Servo init ───────────────────────────────────────────────────────────────
   feederServo.write(SERVO_CLOSED);
   feederServo.attach(SERVO_PIN, 500, 2400);
-  // Brief pre-charge pause: lets the 1000µF capacitor refill on the VIN rail
-  // before the servo draws inrush current. Reduces voltage sag at startup.
-  delay(80);
-  // Keep servo CLOSED here so food only flows once the VIN rail has settled
-  // and the scale is actively reading inside the loop.
+  delay(80); // Let VIN rail capacitor recharge before motor draws current
   feederServo.write(SERVO_CLOSED);
 
-  // Motor startup blackout: the servo motor's inrush current (and VIN rail sag)
-  // makes the HX711 read falsely high for up to ~600 ms after attach.
-  // The servo stays CLOSED during this window, so no food falls blindly.
-  const unsigned long MOTOR_SETTLE_MS  = 600;
+  // ── Constants ────────────────────────────────────────────────────────────────
+  // Motor startup blackout: HX711 reads falsely high for ~600ms after servo attach.
+  // Gate stays CLOSED during this window so no food falls blindly.
+  const unsigned long MOTOR_SETTLE_MS   = 600;
   // Outlier filter: reject implausibly large single-cycle jumps (VIN sag artefacts).
-  const float         MAX_WEIGHT_DELTA = 35.0; // grams
+  const float         MAX_WEIGHT_DELTA  = 30.0; // grams
+  // Phase 1→2 threshold: switch to trickle when this % of target is on the scale.
+  // TUNING: Increase if trickle phase starts too early; decrease if bulk overshoots.
+  const float         TRICKLE_START_PCT = 0.80f; // switch to trickle at 80% of target
+  // In-flight compensation during TRICKLE phase only (much less food in air).
+  // TUNING: If trickle still overshoots, increase; if it undershoots, decrease.
+  const float         IN_FLIGHT_TRICKLE_G = 3.0f;
+  // Trickle pulse timing: servo opens for TRICKLE_OPEN_MS then closes for TRICKLE_CLOSE_MS.
+  // Shorter open = fewer kibbles fall per pulse = finer control.
+  // TUNING: If trickle is too slow, decrease TRICKLE_CLOSE_MS; if too coarse, decrease TRICKLE_OPEN_MS.
+  const int           TRICKLE_OPEN_MS   = 150; // ms gate is open per trickle pulse
+  const int           TRICKLE_CLOSE_MS  = 250; // ms gate is closed between pulses
 
-  // In-Flight Compensation (stop early to account for kibble in the air)
-  // Without trickle feed, we must stop significantly early to account for
-  // the ~400ms lag of the HX711 chip + the physical kibble falling through the air.
-  // TUNING: Observed ~20g overshoot with 23g offset → raised to 42g.
-  // If you still see overshoot/undershoot after reflashing, adjust this value:
-  //   Still over by Xg → increase by X  |  Under by Xg → decrease by X
-  const float IN_FLIGHT_OFFSET_G = 42.0;
+  float         currentWeight     = startingWeight;
+  unsigned long irBlockStartTime  = 0;
+  unsigned long dispenseStartTime = millis();
+  bool          isIrBlocked       = false;
+  bool          isTrickling       = false;  // true once we enter Phase 2
 
-  float         currentWeight      = startingWeight;
-  unsigned long irBlockStartTime   = 0;
-  unsigned long dispenseStartTime  = millis();
-  bool          isIrBlocked        = false;
-
+  // ── Dispense loop ────────────────────────────────────────────────────────────
   while (true) {
-    float remaining = targetAbsoluteWeight - currentWeight;
+    float dispensed = currentWeight - startingWeight;
+    float remaining = (float)targetWeight - dispensed;
 
-    // Safety check: ensure it pours for at least a fraction of a second even for very small targets
-    if (remaining <= IN_FLIGHT_OFFSET_G && (millis() - dispenseStartTime > MOTOR_SETTLE_MS + 200)) {
-      Serial.println("[Dispense] Target reached (including in-flight offset).");
+    // ── Phase decision ─────────────────────────────────────────────────────
+    // Phase 1 (Bulk): Full-open pour until TRICKLE_START_PCT of target is reached.
+    // Phase 2 (Trickle): Pulse open/close for precise final grams.
+    bool shouldTrickle = (dispensed >= (float)targetWeight * TRICKLE_START_PCT);
+    if (shouldTrickle && !isTrickling) {
+      closeHopper();
+      Serial.printf("[Dispense] Phase 2 — trickle at %.1fg (%.0f%% of %dg target)\n",
+                    dispensed, TRICKLE_START_PCT * 100, targetWeight);
+      isTrickling = true;
+    }
+
+    // ── Stop condition ─────────────────────────────────────────────────────
+    float stopOffset = isTrickling ? IN_FLIGHT_TRICKLE_G : 0.0f;
+    bool  scaleReady = millis() - dispenseStartTime > MOTOR_SETTLE_MS;
+    if (scaleReady && remaining <= stopOffset) {
+      Serial.printf("[Dispense] Target reached — dispensed %.1fg\n", dispensed);
       break;
     }
 
-    // Hard timeout — 35s to allow for the slower, more precise trickle phase
+    // ── Hard timeout (35 s) ────────────────────────────────────────────────
     if (millis() - dispenseStartTime > 35000) {
       Serial.println("[Dispense] TIMEOUT — stopping.");
       break;
     }
 
-    if (scale.is_ready() && (millis() - dispenseStartTime > MOTOR_SETTLE_MS)) {
-      // Take 2 samples — better noise rejection than 1 without blocking the loop too long
-      float newWeight = scale.get_units(2) - driftOffset;
-
-      // Outlier filter: reject readings that jump implausibly fast
+    // ── Scale reading ──────────────────────────────────────────────────────
+    if (scale.is_ready() && scaleReady) {
+      float newWeight = scale.get_units(3) - driftOffset; // 3 samples: good accuracy vs speed
       if (abs(newWeight - currentWeight) <= MAX_WEIGHT_DELTA) {
         currentWeight = newWeight;
       } else {
-        Serial.printf("[Dispense] Scale spike ignored: %.1fg -> %.1fg (delta %.1fg)\n",
+        Serial.printf("[Dispense] Spike ignored: %.1fg → %.1fg (Δ%.1fg)\n",
                       currentWeight, newWeight, abs(newWeight - currentWeight));
       }
     }
 
-    // 2. Motor Control: Continuous pour until target is reached
-    if (millis() - dispenseStartTime > MOTOR_SETTLE_MS) {
+    // ── Motor control ──────────────────────────────────────────────────────
+    if (!scaleReady) {
+      closeHopper(); // Stay closed during motor settle window
+    } else if (isTrickling) {
+      // Trickle: pulse open → wait → close → wait → repeat
       openHopper();
+      delay(TRICKLE_OPEN_MS);
+      closeHopper();
+      delay(TRICKLE_CLOSE_MS);
     } else {
-      closeHopper(); // Hold closed until scale is ready and VIN settles
+      openHopper(); // Bulk: full-open continuous pour
     }
 
-    // Jam detection
+    // ── Jam detection ──────────────────────────────────────────────────────
     if (digitalRead(IR_PIN) == IR_JAM_STATE) {
       if (!isIrBlocked) {
         isIrBlocked      = true;
         irBlockStartTime = millis();
       } else if (millis() - irBlockStartTime > jamTimeout) {
         Serial.println("[JAM] Anti-jam sequence triggered.");
-        closeHopper(); // Return to closed before re-opening
+        closeHopper();
         delay(1000);
         openHopper();
         delay(1000);
-        
         if (digitalRead(IR_PIN) == IR_JAM_STATE) {
           systemJammed = true;
           triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
@@ -400,46 +418,44 @@ void dispenseByWeight() {
 
     client.loop(); // Keep MQTT alive
 
-    // Periodically push telemetry so dashboard doesn't time out
+    // Periodically push live telemetry so dashboard stays current
     static unsigned long lastDispenseTelemetry = 0;
     if (millis() - lastDispenseTelemetry > 3000) {
       lastDispenseTelemetry = millis();
-      currentBowlWeight = currentWeight; // Live update for dashboard
+      currentBowlWeight = currentWeight;
       sendTelemetry(lastValidLevel);
     }
 
-    delay(30); // Reduced from 50ms → faster gate-close reaction
+    if (!isTrickling) delay(20); // Trickle has its own timing — only delay in bulk phase
   }
 
-  closeHopper(); // Return servo to closed (idle/default) position
+  closeHopper();
+  Serial.println("[Dispense] Servo closed — settling...");
+  delay(1500); // Allow remaining in-air kibble to land and scale to settle
 
-  Serial.println("[Dispense] Servo returned to closed — settling...");
-  delay(1500); // Wait for servo to fully close and scale to settle
-
-  feederServo.detach(); // Detach again — no more PWM until next dispense
-  // Force the PWM pin LOW so it doesn't float and pick up EMI,
-  // which causes the servo to "turn crazy" or twitch when idle.
+  feederServo.detach();
   pinMode(SERVO_PIN, OUTPUT);
   digitalWrite(SERVO_PIN, LOW);
 
+  // ── Final measurement ────────────────────────────────────────────────────────
   if (scale.is_ready()) {
-    currentBowlWeight = scale.get_units(5) - driftOffset; // get average over 5 readings
+    currentBowlWeight   = scale.get_units(10) - driftOffset; // 10-sample stable read
     lastDispensedWeight = currentBowlWeight - startingWeight;
   } else {
     lastDispensedWeight = currentWeight - startingWeight;
   }
 
-  if (lastDispensedWeight < 0) lastDispensedWeight = 0; // sanity check
+  if (lastDispensedWeight < 0) lastDispensedWeight = 0;
 
-  if (lastDispensedWeight >= (targetWeight - 2.0)) {
+  if (lastDispensedWeight >= (targetWeight - 3.0)) {
     lastDispenseSuccessful = true;
-    Serial.printf("[Dispense] ✓ Success: %.1fg dispensed.\n", lastDispensedWeight);
+    Serial.printf("[Dispense] Success: %.1fg dispensed (target %dg, error %.1fg)\n",
+                  lastDispensedWeight, targetWeight, lastDispensedWeight - targetWeight);
   } else {
     lastDispenseSuccessful = false;
-    Serial.printf("[Dispense] ✗ Incomplete: %.1fg dispensed. Jam detected or timeout.\n", lastDispensedWeight);
+    Serial.printf("[Dispense] Incomplete: %.1fg dispensed. Jam or timeout.\n", lastDispensedWeight);
   }
 
-  // Immediately push result so the dashboard shows updated data
   sendTelemetry(lastValidLevel);
 }
 

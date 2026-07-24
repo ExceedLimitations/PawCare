@@ -345,11 +345,26 @@ export default function App() {
   const addAlert = useCallback((type, title, message) => {
     const id = Date.now().toString() + Math.random().toString(36).substr(2, 5);
     const time = new Date().toLocaleTimeString([], { hour12: false });
-    setAlerts(p => [{ id, type, title, message, time }, ...p]);
-  }, []);
+    const record = { id, type, title, message, time };
+    // Optimistic update — show immediately in UI
+    setAlerts(p => [record, ...p]);
+    // Persist to Firestore via server
+    authFetch('/notifications', {
+      method: 'POST',
+      body: JSON.stringify(record),
+    }).catch(err => console.warn('[Notifications] Failed to save:', err));
+  }, [authFetch]);
 
   const dismissAlert = (id) => {
     setAlerts(p => p.filter(a => a.id !== id));
+    authFetch(`/notifications/${id}`, { method: 'DELETE' })
+      .catch(err => console.warn('[Notifications] Failed to dismiss:', err));
+  };
+
+  const clearAllAlerts = () => {
+    setAlerts([]);
+    authFetch('/notifications', { method: 'DELETE' })
+      .catch(err => console.warn('[Notifications] Failed to clear:', err));
   };
 
   const handleStatusUpdate = useCallback((newStatus, isLive = true) => {
@@ -475,7 +490,7 @@ export default function App() {
 
     const init = async () => {
       try {
-        const [s, today, sched, recent, weekly, prof, fwManifest] = await Promise.allSettled([
+        const [s, today, sched, recent, weekly, prof, fwManifest, notifs] = await Promise.allSettled([
           authFetch('/status').then(r => r.json()),
           authFetch('/feedings/today').then(r => r.json()),
           authFetch('/schedules').then(r => r.json()),
@@ -483,6 +498,7 @@ export default function App() {
           authFetch('/feedings/weekly').then(r => r.json()),
           authFetch('/profile').then(r => r.json()),
           fetch('/firmware/version.json').then(r => r.json()),
+          authFetch('/notifications').then(r => r.json()),
         ]);
         if (s.status === 'fulfilled' && s.value && !s.value.error) {
           handleStatusUpdate(s.value, false);
@@ -505,6 +521,9 @@ export default function App() {
         }
         if (fwManifest && fwManifest.status === 'fulfilled' && fwManifest.value?.version) {
           setLatestFwVersion(fwManifest.value.version);
+        }
+        if (notifs && notifs.status === 'fulfilled' && Array.isArray(notifs.value)) {
+          setAlerts(notifs.value);
         }
       } catch (err) {
         console.warn('Backend connection failed:', err);
@@ -1130,7 +1149,7 @@ export default function App() {
                 <Bell size={18} />
                 <span className="label-caps">SYSTEM NOTIFICATIONS</span>
               </div>
-              <button onClick={() => setAlerts([])} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}>
+              <button onClick={clearAllAlerts} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}>
                 Clear
               </button>
             </div>

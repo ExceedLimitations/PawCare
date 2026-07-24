@@ -398,6 +398,68 @@ app.delete("/schedules/:id", authenticate, async (req, res) => {
   }
 });
 
+/* ── REST: Notifications ────────────────────────────────────── */
+
+// GET /notifications — fetch all saved notifications (newest first)
+app.get("/notifications", authenticate, async (_req, res) => {
+  try {
+    const snap = await firestoreDb.collection("notifications").orderBy("timestamp", "desc").limit(100).get();
+    const rows = [];
+    snap.forEach(doc => rows.push({ id: doc.id, ...doc.data() }));
+    return res.json(rows);
+  } catch (err) {
+    console.error("[Firebase] Error fetching notifications:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// POST /notifications — save a new notification
+app.post("/notifications", authenticate, async (req, res) => {
+  const { id, type, title, message, time } = req.body;
+  if (!title || !message) return res.status(400).json({ error: "title and message required" });
+  const record = {
+    id:        id || crypto.randomUUID(),
+    type:      type || "info",
+    title:     title.trim(),
+    message:   message.trim(),
+    time:      time || new Date().toLocaleTimeString([], { hour12: false }),
+    timestamp: new Date().toISOString(),
+  };
+  try {
+    await firestoreDb.collection("notifications").doc(record.id).set(record);
+    return res.json(record);
+  } catch (err) {
+    console.error("[Firebase] Error saving notification:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// DELETE /notifications — clear ALL notifications
+app.delete("/notifications", authenticate, async (_req, res) => {
+  try {
+    const snap = await firestoreDb.collection("notifications").get();
+    const batch = firestoreDb.batch();
+    snap.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    console.log(`[Notifications] Cleared ${snap.size} notifications.`);
+    return res.json({ success: true, deleted: snap.size });
+  } catch (err) {
+    console.error("[Firebase] Error clearing notifications:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// DELETE /notifications/:id — dismiss a single notification
+app.delete("/notifications/:id", authenticate, async (req, res) => {
+  try {
+    await firestoreDb.collection("notifications").doc(req.params.id).delete();
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[Firebase] Error deleting notification:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 /* ─────────────────────────── Socket.io ──────────────────────── */
 const io = new Server(server, { cors: { origin: "*" } });
 
