@@ -525,6 +525,18 @@ let lastSensorEntry = null;
 let lastSensorArchiveTime = 0;
 let lastSeenDevice = 0;
 
+// Heartbeat: every 10 s, broadcast device online/offline state to all dashboard clients.
+// This ensures clients that just connected (or reconnected) get the current state
+// without waiting for the next MQTT message from the device.
+setInterval(() => {
+  const isDeviceOnline = lastSeenDevice > 0 && (Date.now() - lastSeenDevice < 25000);
+  if (!isDeviceOnline && lastSeenDevice > 0) {
+    // Device was seen before but has gone quiet — notify clients it's offline
+    io.emit("status", { online: false });
+    lastSeenDevice = 0; // prevent repeated offline emits
+  }
+}, 10000);
+
 mqttClient.on("message", async (topic, payload) => {
   console.log(`[MQTT] ← ${topic}: ${payload.toString()}`);
   let data;

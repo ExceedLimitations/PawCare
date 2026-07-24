@@ -399,7 +399,7 @@ export default function App() {
       if (deviceTimeoutRef.current) clearTimeout(deviceTimeoutRef.current);
       deviceTimeoutRef.current = setTimeout(() => {
         setDeviceConnected(false);
-      }, 15000);
+      }, 30000); // 30s — accounts for MQTT relay latency and Render cold-start delays
     }
   }, []);
 
