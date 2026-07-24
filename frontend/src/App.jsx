@@ -419,11 +419,10 @@ export default function App() {
       addLog('ok', `${typeLabel} dispense — ${d.portion_g}g dispensed at ${t}`);
       setRecentFeedings(p => [d, ...p].slice(0, 50));
 
-      // Add in-app notification using statusRef for live bowl weight (avoids stale closure)
-      const bowlW = Math.max(0, statusRef.current.bowl_weight ?? statusRef.current.last_dispensed_g ?? 0);
-      const bowlPct = Math.min(100, Math.round((bowlW / 200) * 100));
+      // Add in-app notification — use hopper food_level from statusRef (avoids stale closure)
+      const foodLevel = statusRef.current.food_level ?? 0;
       const notifTitle = 'Food Dispensed';
-      const notifBody = `${typeLabel} — ${d.portion_g}g dispensed at ${t}. Bowl is ~${bowlPct}% full.`;
+      const notifBody = `${typeLabel} — ${d.portion_g}g dispensed. Food level is at ${foodLevel}%.`;
       addAlert('info', notifTitle, notifBody);
 
       // Native browser/OS desktop notification (works when tab is in background)
