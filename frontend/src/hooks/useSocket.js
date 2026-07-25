@@ -23,6 +23,13 @@ export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, o
   onOtaStatusRef.current     = onOtaStatus;
 
   useEffect(() => {
+    if (!token) {
+      // No auth token — don't open a connection that the server will immediately reject.
+      // Socket.io would retry indefinitely, flooding the server with failed handshakes.
+      socketRef.current = null;
+      setConnected(false);
+      return;
+    }
     const socket = io(IS_DEV ? 'http://localhost:3000' : '/', {
       auth: { token },
     });

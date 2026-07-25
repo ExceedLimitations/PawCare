@@ -81,10 +81,10 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
     return ((h * 60 + m) / 1440) * 100;
   };
 
-  const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+  const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
   useEffect(() => {
     const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+      setCurrentTime(new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
     }, 10000);
     return () => clearInterval(timer);
   }, []);
@@ -147,12 +147,21 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
             if (!s.enabled) {
               state = 'disabled';
             } else if (sMinutes < currentMinutes) {
-              const startOfDay = new Date();
-              startOfDay.setHours(0, 0, 0, 0);
+              // Compare dates in UTC+8 (Asia/Manila) so the completed/missed state
+              // matches the timezone the server uses when it fires scheduled feeds.
+              // Using the browser's local TZ would give wrong results if the browser
+              // is not in Manila time (e.g. a UTC laptop reviewing the dashboard).
+              const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+              const todayManila = new Date(Date.now() + MANILA_OFFSET_MS)
+                .toISOString().slice(0, 10);
 
               const wasDispensed = recentFeedings.some(f => {
-                const fedTime = new Date(f.timestamp);
-                return fedTime >= startOfDay && f.type === 'scheduled' && f.label === s.label;
+                const fedManila = new Date(
+                  new Date(f.timestamp).getTime() + MANILA_OFFSET_MS
+                );
+                return fedManila.toISOString().slice(0, 10) === todayManila
+                    && f.type === 'scheduled'
+                    && f.label === s.label;
               });
 
               state = wasDispensed ? 'completed' : 'missed';
@@ -277,10 +286,10 @@ const Login = ({ onLogin }) => {
 };
 
 const ClockDisplay = () => {
-  const [time, setTime] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+  const [time, setTime] = useState(() => new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
   useEffect(() => {
     const timer = setInterval(() => {
-      setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+      setTime(new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
@@ -305,6 +314,10 @@ export default function App() {
       return res;
     });
   }, []);
+
+  // Memoize token so useSocket only reconnects when the stored value actually changes,
+  // not on every unrelated re-render of App.
+  const token = useMemo(() => localStorage.getItem('pawcare_auth'), [isAuthenticated]);
   const [profile, setProfile] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editProfile, setEditProfile] = useState({ name: '', breed: '' });
@@ -321,7 +334,7 @@ export default function App() {
   const [alerts, setAlerts] = useState([]);
   const [weightDelta, setWeightDelta] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newSchedule, setNewSchedule] = useState({ label: '', time: '08:00', portion_g: 45 });
+  const [newSchedule, setNewSchedule] = useState({ label: '', time: '08:00', portion_g: 45, days: 'daily' });
   const [lastSyncTime, setLastSyncTime] = useState('—');
   const [deviceConnected, setDeviceConnected] = useState(false);
   const [manualPortion, setManualPortion] = useState(45);
@@ -344,7 +357,7 @@ export default function App() {
 
   const addAlert = useCallback((type, title, message) => {
     const id = Date.now().toString() + Math.random().toString(36).substr(2, 5);
-    const time = new Date().toLocaleTimeString([], { hour12: false });
+    const time = new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour12: false });
     const record = { id, type, title, message, time };
     // Optimistic update — show immediately in UI
     setAlerts(p => [record, ...p]);
@@ -375,9 +388,9 @@ export default function App() {
     }
 
     if (newStatus.timestamp) {
-      setLastSyncTime(new Date(newStatus.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+      setLastSyncTime(new Date(newStatus.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
     } else {
-      setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+      setLastSyncTime(new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
     }
 
     // Capture device's running firmware version from telemetry
@@ -426,7 +439,7 @@ export default function App() {
       setFeeding(false);
       setDispenseSuccess(true);
       setTimeout(() => setDispenseSuccess(false), 3000);
-      const t = new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+      const t = new Date(d.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
       setLastFed({ time: t, amount: d.portion_g, type: d.type });
       const typeLabel = d.type === 'scheduled'
         ? (d.label ? `Scheduled (${d.label})` : 'Scheduled')
@@ -446,8 +459,9 @@ export default function App() {
         catch (e) { console.warn('[Notification] Native push failed:', e); }
       }
 
-      // Update weekly chart
-      const todayIso = new Date().toISOString().slice(0, 10);
+      // Use Manila offset so the live chart bar matches the server's weekly grouping
+      const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+      const todayIso = new Date(Date.now() + MANILA_OFFSET_MS).toISOString().slice(0, 10);
       setWeeklyFeedings(prev => {
         const next = [...prev];
         const dayIdx = next.findIndex(w => w.day === todayIso);
@@ -464,7 +478,7 @@ export default function App() {
       addAlert(d.level === 'error' ? 'error' : 'warning', d.level === 'error' ? 'Fault Detected' : 'System Notice', d.message);
     },
     onOtaStatus: handleOtaStatus,
-    token: localStorage.getItem('pawcare_auth'),
+    token,
   });
 
   const prevJammed = useRef(false);
@@ -509,7 +523,7 @@ export default function App() {
           setRecentFeedings(recent.value);
           if (recent.value.length > 0) {
             const last = recent.value[0];
-            const t = new Date(last.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+            const t = new Date(last.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
             setLastFed({ time: t, amount: last.portion_g, type: last.type });
           }
         }
@@ -542,7 +556,7 @@ export default function App() {
       Notification.requestPermission().catch(() => {});
     }
 
-  }, [handleStatusUpdate, isAuthenticated]);
+  }, [handleStatusUpdate, isAuthenticated, authFetch]);
 
   const triggerManualDispense = () => {
     if (feeding) return;
@@ -565,10 +579,12 @@ export default function App() {
     try {
       await authFetch('/firmware/update', { method: 'POST' });
       addAlert('info', 'OTA Update Triggered', 'Device is checking for firmware updates. It will reboot automatically if a new version is found.');
+      // otaUpdating will be cleared by handleOtaStatus when the device responds.
+      // Fall back to clearing after 30 s if no MQTT response arrives.
+      setTimeout(() => setOtaUpdating(false), 30000);
     } catch (err) {
       addAlert('error', 'OTA Failed', 'Could not send update command to device.');
-    } finally {
-      setTimeout(() => setOtaUpdating(false), 5000);
+      setOtaUpdating(false); // Clear immediately on network error
     }
   };
 
@@ -577,23 +593,33 @@ export default function App() {
       method: 'PATCH',
       body: JSON.stringify({ enabled })
     })
-      .then(() => {
+      .then(r => {
+        if (!r.ok) throw new Error(`Server responded ${r.status}`);
         setSchedules(p => p.map(s => s.id === id ? { ...s, enabled } : s));
         addLog('info', `Schedule slot ${enabled ? 'enabled' : 'disabled'}`);
+      })
+      .catch(err => {
+        addLog('err', `Failed to toggle schedule: ${err.message}`);
+        addAlert('error', 'Schedule Update Failed', 'Could not update schedule. Please try again.');
       });
   };
 
   const deleteSchedule = (id) => {
     if (!confirm('Delete this feeding schedule?')) return;
     authFetch(`/schedules/${id}`, { method: 'DELETE' })
-      .then(() => {
+      .then(r => {
+        if (!r.ok) throw new Error(`Server responded ${r.status}`);
         setSchedules(p => p.filter(s => s.id !== id));
         addLog('warn', `Schedule slot deleted`);
+      })
+      .catch(err => {
+        addLog('err', `Failed to delete schedule: ${err.message}`);
+        addAlert('error', 'Delete Failed', 'Could not delete schedule. Please try again.');
       });
   };
 
   const handleAddScheduleClick = () => {
-    setNewSchedule({ label: 'Custom Feed', time: '08:00', portion_g: 45 });
+    setNewSchedule({ label: 'Custom Feed', time: '08:00', portion_g: 45, days: 'daily' });
     setShowAddModal(true);
   };
 
@@ -604,16 +630,23 @@ export default function App() {
         label: newSchedule.label || 'Custom Slot',
         time: newSchedule.time,
         portion_g: newSchedule.portion_g,
-        days: 'daily'
+        days: newSchedule.days || 'daily'
       })
     })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`Server responded ${r.status}`);
+        return r.json();
+      })
       .then(s => {
         if (s.id) {
           setSchedules(p => [...p, s]);
           setShowAddModal(false);
           addLog('ok', `Added new schedule slot: ${s.label} at ${s.time}`);
         }
+      })
+      .catch(err => {
+        addLog('err', `Failed to save schedule: ${err.message}`);
+        addAlert('error', 'Schedule Save Failed', 'Could not add schedule. Please try again.');
       });
   };
 
@@ -685,7 +718,7 @@ export default function App() {
 
   useEffect(() => {
     fetchChartData(chartPeriod);
-  }, [chartPeriod, fetchChartData, recentFeedings]);
+  }, [chartPeriod, fetchChartData]);
 
   const chartData = useMemo(() => ({
     labels: chartFeedings.map(f => {
@@ -966,7 +999,7 @@ export default function App() {
               <input
                 type="number"
                 value={manualPortion}
-                onChange={(e) => setManualPortion(Math.max(1, parseInt(e.target.value) || 10))}
+                onChange={(e) => { const v = parseInt(e.target.value); setManualPortion(isNaN(v) ? 10 : Math.max(1, v)); }}
                 style={{ width: '45px', background: 'transparent', border: 'none', color: 'var(--text-main)', fontSize: '1.1rem', textAlign: 'right', outline: 'none', padding: 0 }}
                 className="font-mono"
               />
@@ -999,7 +1032,7 @@ export default function App() {
 
           <button
             onClick={triggerOTAUpdate}
-            disabled={otaUpdating || !connected}
+            disabled={otaUpdating || !connected || !deviceConnected}
             style={{
               width: '100%',
               marginTop: '8px',
@@ -1016,7 +1049,7 @@ export default function App() {
               fontWeight: 600,
               letterSpacing: '0.05em',
               textTransform: 'uppercase',
-              cursor: otaUpdating || !connected ? 'not-allowed' : 'pointer',
+              cursor: otaUpdating || !connected || !deviceConnected ? 'not-allowed' : 'pointer',
               transition: 'all 0.15s',
             }}
           >
@@ -1189,8 +1222,8 @@ export default function App() {
                 <History size={18} />
                 <span className="label-caps">ESP32 EVENT LOG</span>
               </div>
-              <button onClick={() => setRecentFeedings([])} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}>
-                Clear
+              <button onClick={() => setRecentFeedings([])} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }} title="Hides feedings from this session only — refresh to restore from server">
+                Hide
               </button>
             </div>
             <div className="history-list" style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
@@ -1200,7 +1233,7 @@ export default function App() {
                 </div>
               ) : (
                 recentFeedings.map((f, i) => {
-                  const localTime = new Date(f.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+                  const localTime = new Date(f.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
                   return (
                     <div key={f.id || i} className="history-row-compact">
                       <span className="history-timestamp font-mono">{localTime}</span>
@@ -1338,6 +1371,19 @@ export default function App() {
                 value={newSchedule.portion_g}
                 onChange={e => setNewSchedule({ ...newSchedule, portion_g: parseInt(e.target.value) || 100 })}
               />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Repeat</label>
+              <select
+                className="form-input"
+                value={newSchedule.days}
+                onChange={e => setNewSchedule({ ...newSchedule, days: e.target.value })}
+              >
+                <option value="daily">Every day</option>
+                <option value="weekdays">Weekdays only (Mon–Fri)</option>
+                <option value="weekends">Weekends only (Sat–Sun)</option>
+              </select>
             </div>
 
             <div className="modal-footer">

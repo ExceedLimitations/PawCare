@@ -34,14 +34,15 @@ try {
   process.exit(1);
 }
 
-/* ─────────────────────────── Config ─────────────────────────── */
-const PORT = process.env.PORT || 3000;
-const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://broker.hivemq.com:1883";
-const TOPIC_STATUS   = process.env.MQTT_TOPIC_STATUS   || "pawfeed/device01/status";
-const TOPIC_SENSOR   = process.env.MQTT_TOPIC_SENSOR   || "pawfeed/device01/sensor";
-const TOPIC_CMD      = process.env.MQTT_TOPIC_CMD      || "pawfeed/device01/command";
-const TOPIC_ALERTS   = process.env.MQTT_TOPIC_ALERTS   || "pawfeed/device01/alerts";
-const TOPIC_FEED_LOG = process.env.MQTT_TOPIC_FEED_LOG || "pawfeed/device01/feed_log";
+/* ──────────────────────────── Config ─────────────────────────── */
+const PORT     = process.env.PORT || 3000;
+const LOCAL_TZ = process.env.TZ   || "Asia/Manila"; // All local-time calculations use this
+const MQTT_BROKER    = process.env.MQTT_BROKER          || "mqtt://broker.hivemq.com:1883";
+const TOPIC_STATUS   = process.env.MQTT_TOPIC_STATUS    || "pawfeed/device01/status";
+const TOPIC_SENSOR   = process.env.MQTT_TOPIC_SENSOR    || "pawfeed/device01/sensor";
+const TOPIC_CMD      = process.env.MQTT_TOPIC_CMD       || "pawfeed/device01/command";
+const TOPIC_ALERTS   = process.env.MQTT_TOPIC_ALERTS    || "pawfeed/device01/alerts";
+const TOPIC_FEED_LOG = process.env.MQTT_TOPIC_FEED_LOG  || "pawfeed/device01/feed_log";
 const TOPIC_OTA_STATUS = process.env.MQTT_TOPIC_OTA_STATUS || "pawfeed/device01/ota_status";
 
 /* ─────────────────────────── Express ────────────────────────── */
@@ -198,16 +199,20 @@ app.post("/feed", authenticate, feedLimiter, async (req, res) => {
 });
 
 const getLocalCutoffISO = (daysBack = 0) => {
+  // Compute UTC offset for LOCAL_TZ dynamically so this works for any timezone,
+  // not just Asia/Manila. toLocaleString is used because Date.getTimezoneOffset()
+  // always returns the server *system* offset, not the configured LOCAL_TZ offset.
   const now = new Date();
-  const localTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  const offsetMs = new Date(now.toLocaleString("en-US", { timeZone: LOCAL_TZ })).getTime()
+                 - new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
+  const localTime = new Date(now.getTime() + offsetMs);
   localTime.setUTCDate(localTime.getUTCDate() - daysBack);
   localTime.setUTCHours(0, 0, 0, 0);
-  const utcCutoff = new Date(localTime.getTime() - (8 * 60 * 60 * 1000));
-  return utcCutoff.toISOString();
+  return new Date(localTime.getTime() - offsetMs).toISOString();
 };
 
 const getLocalISO = (isoString) => {
-  return new Date(isoString).toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace(' ', 'T');
+  return new Date(isoString).toLocaleString("sv-SE", { timeZone: LOCAL_TZ }).replace(' ', 'T');
 };
 
 app.get("/feedings/today", authenticate, async (_req, res) => {
@@ -307,16 +312,15 @@ app.get("/status", authenticate, async (_req, res) => {
 });
 
 app.get("/sensor/history", authenticate, async (_req, res) => {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 6);
-  cutoff.setHours(0, 0, 0, 0);
+  // Use getLocalCutoffISO so "midnight" is midnight in LOCAL_TZ, not the server system TZ.
+  const cutoffIso = getLocalCutoffISO(6);
 
   try {
-    const snap = await firestoreDb.collection("sensor_logs").where("timestamp", ">=", cutoff.toISOString()).get();
+    const snap = await firestoreDb.collection("sensor_logs").where("timestamp", ">=", cutoffIso).get();
     const byDay = {};
     snap.forEach(doc => {
       const s = doc.data();
-      const day = s.timestamp.slice(0, 10);
+      const day = getLocalISO(s.timestamp).slice(0, 10); // group by local date, not UTC date
       if (!byDay[day]) byDay[day] = { day, food_sum: 0, count: 0 };
       byDay[day].food_sum += s.food_level;
       byDay[day].count++;
@@ -376,9 +380,17 @@ app.post("/schedules", authenticate, async (req, res) => {
 });
 
 app.patch("/schedules/:id", authenticate, async (req, res) => {
-  const enabled = !!req.body.enabled;
+  const { enabled, days, time, portion_g, label } = req.body;
+  const update = {};
+  if (enabled   !== undefined) update.enabled   = !!enabled;
+  if (days      !== undefined) update.days      = String(days);
+  if (time      !== undefined) update.time      = String(time);
+  if (portion_g !== undefined) update.portion_g = Number(portion_g);
+  if (label     !== undefined) update.label     = String(label);
+  if (Object.keys(update).length === 0)
+    return res.status(400).json({ error: "No valid fields to update" });
   try {
-    await firestoreDb.collection("schedules").doc(req.params.id).update({ enabled });
+    await firestoreDb.collection("schedules").doc(req.params.id).update(update);
     invalidateSchedules();
     return res.json({ success: true });
   } catch (err) {
@@ -463,10 +475,39 @@ app.delete("/notifications/:id", authenticate, async (req, res) => {
 /* ─────────────────────────── Socket.io ──────────────────────── */
 const io = new Server(server, { cors: { origin: "*" } });
 
+// Authenticate Socket.io connections with the same JWT used by the REST API.
+// This prevents any third-party page from opening a socket and triggering dispenses.
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error("Authentication required"));
+  try {
+    jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    next(new Error("Invalid or expired token"));
+  }
+});
+
+// Per-socket feed rate limit — mirrors the REST feedLimiter (30 req / 60 s).
+// Prevents authenticated sockets from bypassing the HTTP-layer rate limiter.
+const socketFeedCounts = new Map(); // socket.id → { count, resetAt }
+
 io.on("connection", async (socket) => {
   console.log(`[Socket.io] Client connected — ${socket.id}`);
+  socketFeedCounts.set(socket.id, { count: 0, resetAt: Date.now() + 60000 });
 
   socket.on("feed", async (data) => {
+    // Rate limit: max 30 feed events per 60 s per socket
+    const now = Date.now();
+    const limit = socketFeedCounts.get(socket.id) || { count: 0, resetAt: now + 60000 };
+    if (now > limit.resetAt) { limit.count = 0; limit.resetAt = now + 60000; }
+    limit.count++;
+    socketFeedCounts.set(socket.id, limit);
+    if (limit.count > 30) {
+      socket.emit("error", { message: "Too many feed requests. Try again in a minute." });
+      return;
+    }
+
     const portion = parseInt(data?.portion) || 45;
     const type = data?.type || "manual";
     mqttClient.publish(
@@ -498,9 +539,10 @@ io.on("connection", async (socket) => {
     console.log("[Tare] Scale tare command sent to device via MQTT.");
   });
 
-  socket.on("disconnect", () =>
-    console.log(`[Socket.io] Disconnected — ${socket.id}`),
-  );
+  socket.on("disconnect", () => {
+    socketFeedCounts.delete(socket.id); // clean up rate-limit entry
+    console.log(`[Socket.io] Disconnected — ${socket.id}`);
+  });
 });
 
 /* ─────────────────────────── MQTT ───────────────────────────── */
@@ -559,16 +601,20 @@ mqttClient.on("message", async (topic, payload) => {
   }
 
   if (topic === TOPIC_FEED_LOG) {
+    // Only record physical button-press feeds here. Dashboard/MQTT-triggered feeds are
+    // already logged by the REST /feed or socket feed handler at command time,
+    // so processing them here too would create duplicate Firestore records.
+    if (data.type !== "physical") return;
     const record = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       portion_g: data.portion_g || 100,
-      type: data.type || "physical",
+      type: "physical",
     };
     try {
       await firestoreDb.collection("feedings").doc(record.id).set(record);
       io.emit("feeding_done", record);
-      console.log(`[Feed] ${record.portion_g}g (${record.type})`);
+      console.log(`[Feed] ${record.portion_g}g (physical button)`);
     } catch (err) {
       console.error("[Firebase] Error saving physical feed:", err.message);
     }
@@ -626,7 +672,7 @@ setInterval(async () => {
   
   // Compute current time using Intl.DateTimeFormat
   const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Manila',
+    timeZone: LOCAL_TZ,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false
@@ -634,7 +680,7 @@ setInterval(async () => {
   const hhmm = formatter.format(now);
   
   const dayFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Manila',
+    timeZone: LOCAL_TZ,
     weekday: 'short'
   });
   const weekdayStr = dayFormatter.format(now);
@@ -663,7 +709,9 @@ setInterval(async () => {
 
     firedThisMinute.add(s.id);
 
-    const isDeviceOnline = (Date.now() - lastSeenDevice < 15000);
+    // Use the same 25 s freshness window as the heartbeat emitter so a feed
+    // is never skipped due to normal MQTT relay latency.
+    const isDeviceOnline = (Date.now() - lastSeenDevice < 25000);
     if (!isDeviceOnline) {
       console.log(`[Schedule] "${s.label}" skipped at ${hhmm} — device is offline.`);
       continue;
@@ -684,7 +732,7 @@ setInterval(async () => {
     try {
       await firestoreDb.collection("feedings").doc(record.id).set(record);
       io.emit("feeding_done", record);
-      console.log(`[Schedule] "${s.label}" fired at ${hhmm} (Asia/Manila) — ${s.portion_g}g`);
+      console.log(`[Schedule] "${s.label}" fired at ${hhmm} (${LOCAL_TZ}) — ${s.portion_g}g`);
     } catch (err) {
       console.error("[Firebase] Error saving scheduled feed:", err.message);
     }

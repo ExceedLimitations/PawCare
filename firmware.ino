@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.18"
+#define FIRMWARE_VERSION  "1.1.20"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -85,12 +85,10 @@ int   lastValidLevel         = 72;    // hopper fill level (%)
 float currentBowlWeight      = 0.0;   // Keep variable for telemetry
 float driftOffset            = 0.0;   // Auto-Zero Tracking software offset
 bool  triggerDashboardFeed   = false;
+bool  isPhysicalDispense     = false;  // true when dispense was triggered by physical button (not MQTT)
 bool  triggerTare            = false;  // deferred tare — set from MQTT callback or button, executed in loop()
 bool  g_tareJustFired        = false;  // set by any tare, consumed by load-cell block
 unsigned long g_tareFiredAt  = 0;      // millis() timestamp of last tare
-
-unsigned long lastAutoFeedTime = 0;
-const unsigned long feedCooldown = 60000; // ms between feeds
 
 // =============================================================================
 //  OBJECTS
@@ -198,8 +196,10 @@ void startWiFiManager(bool forceConfig = false) {
 
   // Copy updated custom params back into our char arrays
   strncpy(mqtt_server,  p_mqtt_srv.getValue(),  sizeof(mqtt_server)  - 1);
+  mqtt_server[sizeof(mqtt_server)   - 1] = '\0'; // guarantee null-termination
   mqtt_port = atoi(p_mqtt_port.getValue());
   strncpy(topic_prefix, p_topic_pfx.getValue(), sizeof(topic_prefix) - 1);
+  topic_prefix[sizeof(topic_prefix) - 1] = '\0'; // guarantee null-termination
 
   savePreferences(); // persist to NVS
 
@@ -316,8 +316,6 @@ void dispenseByWeight() {
   if (scale.is_ready()) {
     startingWeight = scale.get_units(10) - driftOffset; // 10 samples for stable baseline
   }
-  float targetAbsoluteWeight __attribute__((unused)) = startingWeight + (float)targetWeight; // kept for reference, unused in two-phase logic
-
   // ── Servo init ───────────────────────────────────────────────────────────────
   feederServo.write(SERVO_CLOSED);
   feederServo.attach(SERVO_PIN, 500, 2400);
@@ -809,7 +807,6 @@ void loop() {
 
   if (lastButtonState == LOW && currentButtonState == HIGH) {
     // ── Button just released ────────────────────────────────────────────────
-    unsigned long holdDuration = millis() - buttonPressTime;
     buttonHeld = false;
     if (tareArmed) {
       // ── LONG HOLD: queue the tare ─────────────────────────────────────────
@@ -817,12 +814,13 @@ void loop() {
       triggerTare = true; // defer to main loop for safe execution
       tareArmed   = false;
 
-    } else if (holdDuration < TARE_HOLD_MS) {
+    } else {
       // ── SHORT PRESS: manual dispense ─────────────────────────────────────
+      // (tareArmed false ↔ held less than TARE_HOLD_MS — no need to re-check duration)
       Serial.println("[BTN] Short press — manual dispense.");
       targetWeight         = 45;
       triggerDashboardFeed = true;
-      // NOTE: feed log is published AFTER dispenseByWeight() completes (see Execute Feed block)
+      isPhysicalDispense   = true; // mark as physical so TOPIC_FEED_LOG is published
     }
   }
 
@@ -858,19 +856,24 @@ void loop() {
 
   // ── Execute Feed ────────────────────────────────────────────────────────────
   if (triggerDashboardFeed) {
-    systemJammed = false;
+    bool wasPhysical     = isPhysicalDispense; // capture before resetting
+    isPhysicalDispense   = false;
+    systemJammed         = false;
     digitalWrite(ALERT_LED_PIN, LOW);
     dispenseByWeight();
-    triggerDashboardFeed = false; // Reset flag after dispensing
+    triggerDashboardFeed = false;
 
-    // Publish feed log AFTER dispense so it reflects the actual outcome,
-    // not a pre-emptive log that could be wrong if a jam or timeout occurred.
-    StaticJsonDocument<128> feedDoc;
-    feedDoc["portion_g"] = lastDispensedWeight > 0 ? (int)round(lastDispensedWeight) : targetWeight;
-    feedDoc["type"]      = "physical"; // covers both button and dashboard triggers
-    char feedBuf[128];
-    serializeJson(feedDoc, feedBuf);
-    client.publish(TOPIC_FEED_LOG, feedBuf);
+    // Only publish TOPIC_FEED_LOG for physical button presses.
+    // Dashboard/MQTT-triggered feeds are already logged by the server at command time,
+    // so publishing here too would create duplicate Firestore records.
+    if (wasPhysical) {
+      StaticJsonDocument<128> feedDoc;
+      feedDoc["portion_g"] = lastDispensedWeight > 0 ? (int)round(lastDispensedWeight) : targetWeight;
+      feedDoc["type"]      = "physical";
+      char feedBuf[128];
+      serializeJson(feedDoc, feedBuf);
+      client.publish(TOPIC_FEED_LOG, feedBuf);
+    }
   }
 
   // ── Ultrasonic hopper level ─────────────────────────────────────────────────
@@ -988,6 +991,8 @@ void loop() {
     (lastValidLevel < emptyThreshold || systemJammed) ? HIGH : LOW);
 
   // ── Update Load Cell Reading ────────────────────────────────────────────────
+  // Defined here (outside both branches) so it is accessible to the else-if below.
+  const unsigned long TARE_SETTLE_MS = 1000; // HX711 settle window after a tare
   if (scale.is_ready()) {
     // 1 sample + manual rolling average to avoid blocking loop
     static float weightSamples[5] = {0,0,0,0,0};
@@ -1008,9 +1013,8 @@ void loop() {
     rawWeight /= 5.0;
     
     // Auto-Zero Tracking (AZT)
-    // Skip for 1 s after a tare — HX711 needs time to settle and we don't
+    // Skip for TARE_SETTLE_MS after a tare — HX711 needs time to settle and we don't
     // want noise spikes > 5 g to immediately overwrite currentBowlWeight.
-    const unsigned long TARE_SETTLE_MS = 1000;
     if (g_tareJustFired && (millis() - g_tareFiredAt < TARE_SETTLE_MS)) {
       currentBowlWeight = 0.0; // hold at zero during settle window
     } else {
@@ -1027,6 +1031,10 @@ void loop() {
         currentBowlWeight = adjustedWeight;
       }
     }
+  } else if (g_tareJustFired && (millis() - g_tareFiredAt >= TARE_SETTLE_MS)) {
+    // Scale was not ready throughout the settle window — clear the flag anyway
+    // so it does not permanently block the load-cell block from running.
+    g_tareJustFired = false;
   }
 
   // ── Non-blocking Jam Buzzer ─────────────────────────────────────────────────

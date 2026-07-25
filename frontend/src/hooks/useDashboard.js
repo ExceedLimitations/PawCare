@@ -10,7 +10,15 @@ export function useNextFeed(schedules) {
       if (!enabled.length) { setNext(null); return; }
 
       const now = new Date();
-      const nowMin = now.getHours() * 60 + now.getMinutes();
+      // Calculate current time in Manila timezone, matching the server's schedule runner.
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Manila',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      const [hhStr, mmStr] = formatter.format(now).split(':');
+      const nowMin = parseInt(hhStr, 10) * 60 + parseInt(mmStr, 10);
 
       // Build list of minutes-since-midnight for each schedule
       const candidates = enabled.map(s => {
