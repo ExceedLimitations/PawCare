@@ -400,7 +400,9 @@ export default function App() {
       const oldWeight = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
       const currentWeight = newStatus.bowl_weight ?? newStatus.last_dispensed_g ?? 0;
       if (oldWeight !== 0 && currentWeight !== oldWeight) {
+        // FIX #5: Set delta and auto-clear after 4 s so the badge doesn't linger forever.
         setTimeout(() => setWeightDelta(currentWeight - oldWeight), 0);
+        setTimeout(() => setWeightDelta(0), 4000);
       }
       const next = { ...prev, ...newStatus };
       statusRef.current = next;
@@ -565,10 +567,11 @@ export default function App() {
     emit('feed', { portion: manualPortion, type: 'manual' });
     addLog('info', `Manual dispense triggered — ${manualPortion}g requested to ESP32`);
 
-    // Safety timeout to release button lock if ESP32 never responds
+    // FIX #7: Safety timeout raised to 40 s to outlast the ESP32's own 35 s hard
+    // timeout. The old 15 s allowed double-tapping while a dispense was still running.
     setTimeout(() => {
       setFeeding(false);
-    }, 15000);
+    }, 40000);
   };
 
   const triggerOTAUpdate = async () => {
@@ -1242,7 +1245,9 @@ export default function App() {
                           {(f.type || 'auto').toUpperCase()}
                         </span>
                       </div>
-                      <span className="history-portion font-mono">{f.portion_g || f.amount || 50}g</span>
+                      {/* FIX #10: Use ?? (nullish coalescing) instead of || so that
+                          portion_g: 0 renders as "0g" rather than the "50g" fallback. */}
+                      <span className="history-portion font-mono">{f.portion_g ?? f.amount ?? 50}g</span>
                       <div className="history-status-icon ok">
                         <CheckCircle size={16} />
                       </div>
@@ -1368,8 +1373,12 @@ export default function App() {
               <input
                 type="number"
                 className="form-input"
+                min="1"
+                max="500"
                 value={newSchedule.portion_g}
-                onChange={e => setNewSchedule({ ...newSchedule, portion_g: parseInt(e.target.value) || 100 })}
+                // FIX #8: Clamp to [1, 500] to prevent absurdly large values being
+                // sent to the ESP32 (which would run the dispense loop for 35 s).
+                onChange={e => setNewSchedule({ ...newSchedule, portion_g: Math.min(500, Math.max(1, parseInt(e.target.value) || 1)) })}
               />
             </div>
 

@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.20"
+#define FIRMWARE_VERSION  "1.1.21"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -250,10 +250,16 @@ int getDistance() {
   return s[1]; // median
 }
 
+// FIX #11: Track whether the Alert LED was turned on by a non-state-machine alert
+// (e.g. sensor fault) so the main loop can clear it when the fault resolves.
+// The state-machine block (L990-991) handles jam / low-food LEDs separately.
+unsigned long alertLedOnAt = 0;  // millis() timestamp of last triggerFlowchartAlert()
+
 /** Buzz + LED alert, then publish an alert message to the dashboard. */
 void triggerFlowchartAlert(String message) {
   Serial.println("[ALERT] " + message);
   digitalWrite(ALERT_LED_PIN, HIGH);
+  alertLedOnAt = millis(); // record when the LED was turned on
   StaticJsonDocument<256> doc;
   doc["alert_message"] = message;
   char buffer[256];
@@ -317,7 +323,8 @@ void dispenseByWeight() {
     startingWeight = scale.get_units(10) - driftOffset; // 10 samples for stable baseline
   }
   // ── Servo init ───────────────────────────────────────────────────────────────
-  feederServo.write(SERVO_CLOSED);
+  // FIX #1: attach() must come before write() — write() before attach() is a no-op
+  // on most ESP32Servo versions and can cause a brief uncontrolled pulse on some.
   feederServo.attach(SERVO_PIN, 500, 2400);
   delay(80); // Let VIN rail capacitor recharge before motor draws current
   feederServo.write(SERVO_CLOSED);
@@ -639,7 +646,13 @@ unsigned long lastReconnectAttempt = 0;
 int reconnectAttempts = 0;
 
 void reconnect() {
-  if (client.connected()) return;
+  if (client.connected()) {
+    // FIX #4: Reset the failure counter whenever we confirm we are connected.
+    // Without this, a board that reconnected after 4 failures starts the next
+    // WiFi outage with counter = 4 and reboots on the very first retry.
+    reconnectAttempts = 0;
+    return;
+  }
 
   if (millis() - lastReconnectAttempt > 5000) {
     lastReconnectAttempt = millis();
@@ -987,8 +1000,16 @@ void loop() {
   }
 
   // ── Alert LED sync ──────────────────────────────────────────────────────────
-  digitalWrite(ALERT_LED_PIN,
-    (lastValidLevel < emptyThreshold || systemJammed) ? HIGH : LOW);
+  // FIX #11 continued: If the LED was turned on by a sensor-fault alert (not a
+  // jam or empty-hopper state), auto-extinguish it after 10 s so it doesn't
+  // stay on permanently after the fault clears.
+  bool ledShouldBeOn = (lastValidLevel < emptyThreshold || systemJammed);
+  if (!ledShouldBeOn && alertLedOnAt > 0 && (millis() - alertLedOnAt < 10000)) {
+    ledShouldBeOn = true; // keep it on for the alert grace period
+  } else if (!ledShouldBeOn && alertLedOnAt > 0 && (millis() - alertLedOnAt >= 10000)) {
+    alertLedOnAt = 0; // grace period expired — allow it to turn off
+  }
+  digitalWrite(ALERT_LED_PIN, ledShouldBeOn ? HIGH : LOW);
 
   // ── Update Load Cell Reading ────────────────────────────────────────────────
   // Defined here (outside both branches) so it is accessible to the else-if below.

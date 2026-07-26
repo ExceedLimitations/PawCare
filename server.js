@@ -175,27 +175,42 @@ app.post("/profile", authenticate, async (req, res) => {
 
 /* ── REST: Feeding ─────────────────────────────────────────── */
 app.post("/feed", authenticate, feedLimiter, async (req, res) => {
-  const portion = parseInt(req.body.portion) || 45;
+  // Clamp portion to [1, 500] g as defence-in-depth behind the frontend validation (Fix #8).
+  const portion = Math.min(500, Math.max(1, parseInt(req.body.portion) || 45));
   const type = req.body.type || "manual";
-  mqttClient.publish(
-    TOPIC_CMD,
-    JSON.stringify({ action: "feed", portion_g: portion }),
-    { qos: 1 },
-  );
+
+  // FIX #2: Build the record before publishing so we have an id to return,
+  // but only write to Firestore (and emit to clients) inside the publish callback.
+  // This ensures phantom feed records are never created if the MQTT broker is down.
   const record = {
     id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     portion_g: portion,
     type,
   };
-  try {
-    await firestoreDb.collection("feedings").doc(record.id).set(record);
-    io.emit("feeding_done", record);
-    return res.json({ success: true, ...record });
-  } catch (err) {
-    console.error("[Firebase] Error saving feed:", err.message);
-    return res.status(500).json({ error: "Database error" });
-  }
+
+  mqttClient.publish(
+    TOPIC_CMD,
+    JSON.stringify({ action: "feed", portion_g: portion }),
+    { qos: 1 },
+    async (err) => {
+      if (err) {
+        console.error("[Feed] MQTT publish failed:", err.message);
+        // The response has already been sent, so just log — can't send another.
+        return;
+      }
+      try {
+        await firestoreDb.collection("feedings").doc(record.id).set(record);
+        io.emit("feeding_done", record);
+        console.log(`[Feed] ${portion}g (${type}) — logged to Firestore`);
+      } catch (dbErr) {
+        console.error("[Firebase] Error saving feed:", dbErr.message);
+      }
+    }
+  );
+
+  // Respond immediately so the dashboard is not blocked waiting for the MQTT ack.
+  return res.json({ success: true, ...record });
 });
 
 const getLocalCutoffISO = (daysBack = 0) => {
@@ -365,7 +380,9 @@ app.get("/schedules", authenticate, async (_req, res) => {
 });
 
 app.post("/schedules", authenticate, async (req, res) => {
-  const { label, time, portion_g = 45, days = "daily" } = req.body;
+  const { label, time, days = "daily" } = req.body;
+  // Clamp portion_g to [1, 500] g — defence-in-depth (Fix #8).
+  const portion_g = Math.min(500, Math.max(1, parseInt(req.body.portion_g) || 45));
   if (!label || !time)
     return res.status(400).json({ error: "label and time required" });
   const entry = { label, time, portion_g, days, enabled: true };
@@ -677,7 +694,9 @@ setInterval(async () => {
     minute: '2-digit',
     hour12: false
   });
-  const hhmm = formatter.format(now);
+  // FIX #3: Intl.DateTimeFormat can return "24:00" for midnight on some platforms.
+  // Normalise to "00:00" so schedules set at midnight always fire.
+  const hhmm = formatter.format(now).replace(/^24:/, "00:");
   
   const dayFormatter = new Intl.DateTimeFormat('en-US', {
     timeZone: LOCAL_TZ,
