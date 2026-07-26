@@ -328,6 +328,7 @@ export default function App() {
   const [recentFeedings, setRecentFeedings] = useState([]);
   const [chartPeriod, setChartPeriod] = useState('week');
   const [chartFeedings, setChartFeedings] = useState([]);
+  const [isChartLoading, setIsChartLoading] = useState(false);
   const [feeding, setFeeding] = useState(false);
   const [dispenseSuccess, setDispenseSuccess] = useState(false);
   const [alerts, setAlerts] = useState([]);
@@ -741,15 +742,16 @@ export default function App() {
 
   const fetchChartData = useCallback(async (period) => {
     const endpoint = period === 'day' ? '/feedings/daily' : period === 'month' ? '/feedings/monthly' : '/feedings/weekly';
-    // Bug fix: immediately clear stale data so the chart shows a loading state
-    // rather than the previous period's bars under the new period's title.
-    setChartFeedings([]);
+    // Start loading — keep old data visible so the chart fades rather than blanks.
+    setIsChartLoading(true);
     try {
       const res = await authFetch(endpoint);
       const data = await res.json();
       if (Array.isArray(data)) setChartFeedings(data);
     } catch (err) {
       console.warn('Chart fetch failed:', err);
+    } finally {
+      setIsChartLoading(false);
     }
   }, [authFetch]);
 
@@ -767,7 +769,9 @@ export default function App() {
       {
         label: 'Dispensed (g)',
         data: chartFeedings.map(f => f.total_g),
-        backgroundColor: '#10B981',
+        backgroundColor: chartFeedings.map(f =>
+          (f.total_g ?? 0) === 0 ? 'rgba(100,116,139,0.25)' : '#10B981'
+        ),
         borderRadius: 4,
         barThickness: chartPeriod === 'month' ? 10 : 24,
       }
@@ -777,6 +781,15 @@ export default function App() {
   const chartOptions = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
+    // Smooth bar grow-in animation on every data update
+    animation: {
+      duration: 400,
+      easing: 'easeOutQuart',
+    },
+    transitions: {
+      // When the dataset changes (period switch), animate bars from the bottom up
+      active: { animation: { duration: 300 } },
+    },
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -1132,9 +1145,27 @@ export default function App() {
                 ))}
               </div>
             </div>
-            <div style={{ height: '260px', width: '100%', position: 'relative' }}>
+            <div style={{ height: '260px', width: '100%', position: 'relative', transition: 'opacity 0.3s ease', opacity: isChartLoading ? 0.4 : 1 }}>
               {chartFeedings.length > 0 ? (
-                <Bar key={chartPeriod} data={chartData} options={chartOptions} />
+                // No key prop — let Chart.js animate the dataset update in place
+                // instead of destroying and recreating the canvas on every period switch.
+                <Bar data={chartData} options={chartOptions} />
+              ) : isChartLoading ? (
+                // Skeleton bars shown while the first load for this period is in flight
+                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', height: '100%', gap: '6px', padding: '0 12px 28px' }}>
+                  {Array.from({ length: chartPeriod === 'month' ? 14 : chartPeriod === 'week' ? 7 : 8 }).map((_, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        flex: 1,
+                        height: `${30 + Math.sin(i * 0.9) * 20 + (i % 3) * 15}%`,
+                        backgroundColor: 'var(--bg-muted)',
+                        borderRadius: '4px',
+                        animation: `pulse 1.4s ease-in-out ${i * 0.08}s infinite`,
+                      }}
+                    />
+                  ))}
+                </div>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }} className="font-mono">
                   No data for this period
@@ -1443,7 +1474,10 @@ export default function App() {
         </div>
       )}
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg) } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+      `}</style>
     </div>
   );
 }
