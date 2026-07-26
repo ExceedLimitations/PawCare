@@ -265,13 +265,37 @@ async function aggregateFeedings(res, daysBack, keyFn, sortFn) {
   }
 }
 
+/**
+ * Pad a sorted array of { day, count, total_g } with zero entries for any
+ * missing dates between daysBack days ago and today (inclusive), using LOCAL_TZ
+ * so the date labels match what the user sees in the dashboard.
+ */
+function padDays(data, daysBack) {
+  const MANILA_OFFSET_MS = new Date(
+    new Date().toLocaleString('en-US', { timeZone: LOCAL_TZ })
+  ).getTime() - new Date(new Date().toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+
+  const todayLocal = new Date(Date.now() + MANILA_OFFSET_MS);
+  const result = [];
+
+  for (let i = daysBack; i >= 0; i--) {
+    const d = new Date(todayLocal);
+    d.setDate(d.getDate() - i);
+    const iso = d.toISOString().slice(0, 10);
+    const found = data.find(r => r.day === iso);
+    result.push(found || { day: iso, count: 0, total_g: 0 });
+  }
+  return result;
+}
+
 app.get("/feedings/weekly", authenticate, async (_req, res) => {
   const keyFn = (f) => getLocalISO(f.timestamp).slice(0, 10);
   const sortFn = (a, b) => a.key.localeCompare(b.key);
   const data = await aggregateFeedings(res, 6, keyFn, sortFn);
   if (data) {
     const renamed = data.map(d => ({ day: d.key, count: d.count, total_g: d.total_g }));
-    return res.json(renamed);
+    // Pad so every day in the last 7 days appears, even days with no feedings.
+    return res.json(padDays(renamed, 6));
   }
 });
 
@@ -281,7 +305,8 @@ app.get("/feedings/monthly", authenticate, async (_req, res) => {
   const data = await aggregateFeedings(res, 29, keyFn, sortFn);
   if (data) {
     const renamed = data.map(d => ({ day: d.key, count: d.count, total_g: d.total_g }));
-    return res.json(renamed);
+    // Pad so every day in the last 30 days appears, even days with no feedings.
+    return res.json(padDays(renamed, 29));
   }
 });
 

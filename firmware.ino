@@ -58,7 +58,7 @@ const char* mqtt_client_id = "PawCareClient-device01";
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.1.21"
+#define FIRMWARE_VERSION  "1.1.22"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // How to trigger: send {"action":"ota_update"} via MQTT from the dashboard.
@@ -74,14 +74,16 @@ const int   jamTimeout       = 1500;  // ms IR blocked before jam is declared
 //                   Food touching the mesh causes timeouts (dist==0), handled separately.
 //                   Set this to the first stable non-zero reading you see when full (~2-4 cm).
 // HOPPER_EMPTY_CM = distance (cm) from sensor to hopper bottom when COMPLETELY EMPTY.
-//                   Remove all food, open lid, read from Serial Monitor, update this value.
+//                   Measured value: sensor reads ~11 cm when hopper is fully empty.
+//                   (Old value was 20 cm, which caused 50% to show when actually empty.)
+//                   To re-calibrate: empty the hopper, open the lid, read from Serial Monitor.
 #define HOPPER_FULL_CM   2    // cm — 100% level
-#define HOPPER_EMPTY_CM  20   // cm — 0% level (adjust to your actual hopper depth!)
+#define HOPPER_EMPTY_CM  11   // cm — 0% level  ← corrected from 20 to match actual hopper depth
 
 bool  systemJammed           = false;
 float lastDispensedWeight    = 0.0;
 bool  lastDispenseSuccessful = false;
-int   lastValidLevel         = 72;    // hopper fill level (%)
+int   lastValidLevel         = 50;    // hopper fill level (%) — neutral assumption until first sensor read
 float currentBowlWeight      = 0.0;   // Keep variable for telemetry
 float driftOffset            = 0.0;   // Auto-Zero Tracking software offset
 bool  triggerDashboardFeed   = false;

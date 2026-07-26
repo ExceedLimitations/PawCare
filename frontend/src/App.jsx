@@ -326,7 +326,6 @@ export default function App() {
   const [lastFed, setLastFed] = useState(null);
   const [schedules, setSchedules] = useState([]);
   const [recentFeedings, setRecentFeedings] = useState([]);
-  const [weeklyFeedings, setWeeklyFeedings] = useState([]);
   const [chartPeriod, setChartPeriod] = useState('week');
   const [chartFeedings, setChartFeedings] = useState([]);
   const [feeding, setFeeding] = useState(false);
@@ -420,18 +419,41 @@ export default function App() {
 
   const handleOtaStatus = useCallback((data) => {
     setOtaStatus(data);
+
     // When the device reports its running version via OTA check, capture it
     if (data.status === 'up_to_date' && data.version) {
       setDeviceFwVersion(data.version); // 'up_to_date' means device is running this version
     }
+
+    // ── In-app + native notifications for terminal OTA states ──────────────────
+    if (data.status === 'success') {
+      const title  = 'Firmware Updated Successfully';
+      const body   = `Device updated to v${data.version || 'new version'} and is rebooting.`;
+      addAlert('info', title, body);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try { new Notification(title, { body, icon: '/favicon.ico' }); }
+        catch (e) { console.warn('[Notification] Native push failed:', e); }
+      }
+    }
+
+    if (data.status === 'failed') {
+      const title  = 'Firmware Update Failed';
+      const body   = data.error ? `OTA error: ${data.error}` : 'The device could not apply the firmware update.';
+      addAlert('error', title, body);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try { new Notification(title, { body, icon: '/favicon.ico' }); }
+        catch (e) { console.warn('[Notification] Native push failed:', e); }
+      }
+    }
+
     // Auto-clear non-active statuses after 10 s so the banner doesn't linger forever
     if (data.status === 'up_to_date' || data.status === 'failed' || data.status === 'success') {
       setTimeout(() => setOtaStatus(null), 10000);
     }
-    if (data.status === 'success') setOtaUpdating(false);
-    if (data.status === 'failed') setOtaUpdating(false);
+    if (data.status === 'success')   setOtaUpdating(false);
+    if (data.status === 'failed')    setOtaUpdating(false);
     if (data.status === 'up_to_date') setOtaUpdating(false);
-  }, []);
+  }, [addAlert]);
 
   const { connected, emit } = useSocket({
     onStatus: handleStatusUpdate,
@@ -461,16 +483,24 @@ export default function App() {
         catch (e) { console.warn('[Notification] Native push failed:', e); }
       }
 
-      // Use Manila offset so the live chart bar matches the server's weekly grouping
+      // Live-update the chart if it is currently showing the Week or Month period.
+      // We update chartFeedings directly so the chart stays in sync with live feeds
+      // without needing a full re-fetch. (Bug fix: previously updated weeklyFeedings
+      // which was a separate, unlinked state that chartFeedings never read from.)
       const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
       const todayIso = new Date(Date.now() + MANILA_OFFSET_MS).toISOString().slice(0, 10);
-      setWeeklyFeedings(prev => {
+      setChartFeedings(prev => {
+        // Only patch if the current chart already has date-keyed rows (week/month mode).
+        // Day mode rows have an `hour` key, not a `day` key — skip those.
+        if (prev.length === 0 || prev[0].hour !== undefined) return prev;
         const next = [...prev];
         const dayIdx = next.findIndex(w => w.day === todayIso);
         if (dayIdx >= 0) {
-          next[dayIdx] = { ...next[dayIdx], total_g: next[dayIdx].total_g + d.portion_g };
+          next[dayIdx] = { ...next[dayIdx], total_g: next[dayIdx].total_g + d.portion_g, count: (next[dayIdx].count || 0) + 1 };
         } else {
+          // Today not yet in the chart (first feed of the day) — append and re-sort.
           next.push({ day: todayIso, total_g: d.portion_g, count: 1 });
+          next.sort((a, b) => a.day.localeCompare(b.day));
         }
         return next;
       });
@@ -530,7 +560,8 @@ export default function App() {
           }
         }
         if (weekly.status === 'fulfilled' && Array.isArray(weekly.value)) {
-          setWeeklyFeedings(weekly.value);
+          // Only pre-populate chart if still on the default 'week' view
+          setChartFeedings(weekly.value);
         }
         if (prof && prof.status === 'fulfilled' && prof.value) {
           setProfile(prof.value);
@@ -710,6 +741,9 @@ export default function App() {
 
   const fetchChartData = useCallback(async (period) => {
     const endpoint = period === 'day' ? '/feedings/daily' : period === 'month' ? '/feedings/monthly' : '/feedings/weekly';
+    // Bug fix: immediately clear stale data so the chart shows a loading state
+    // rather than the previous period's bars under the new period's title.
+    setChartFeedings([]);
     try {
       const res = await authFetch(endpoint);
       const data = await res.json();
