@@ -93,7 +93,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.2"
+#define FIRMWARE_VERSION  "1.2.3"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -414,7 +414,6 @@ void handleDispenser() {
             
             startBeeps(2, 100);
             
-            feederServo.attach(SERVO_PIN, 500, 2400);
             feederServo.write(SERVO_CLOSED);
             
             dispStartTime = millis();
@@ -489,9 +488,6 @@ void handleDispenser() {
 
         case DISPENSE_FINAL_SETTLE:
             if (millis() - dispTrickleTimer > 1500) {
-                feederServo.detach();
-                pinMode(SERVO_PIN, OUTPUT);
-                digitalWrite(SERVO_PIN, LOW);
                 dispState = DISPENSE_EVALUATE;
             }
             break;
@@ -809,10 +805,6 @@ void setup() {
   client.setKeepAlive(60);      // seconds — keeps connection alive
 
   // ── Servo ──────────────────────────────────────────────────────────────────
-  ESP32PWM::allocateTimer(0);
-  ESP32PWM::allocateTimer(1);
-  ESP32PWM::allocateTimer(2);
-  ESP32PWM::allocateTimer(3);
   feederServo.setPeriodHertz(50);
   feederServo.attach(SERVO_PIN, 500, 2400);
   closeHopper(); // Start at CLOSED (90°) — the idle/default position
@@ -820,7 +812,6 @@ void setup() {
   // hardware bootloader issue. Add a 10 kΩ pull-down resistor on the signal wire
   // to hold the pin LOW before the ESP32 firmware takes control.
   delay(500);          // Give servo time to reach center
-  feederServo.detach(); // Detach so WiFi radio noise can't drive the servo while idle
 
   // ── Load Cell ──────────────────────────────────────────────────────────────
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
