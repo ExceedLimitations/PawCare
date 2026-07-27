@@ -93,7 +93,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.0"
+#define FIRMWARE_VERSION  "1.2.1"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -406,13 +406,13 @@ void handleDispenser() {
     switch (dispState) {
         case DISPENSE_INIT:
             Serial.printf("[Dispense] Target: %dg  — starting two-phase dispense...\n", targetWeight);
-            startBeeps(2, 100);
-            
             dispStartingWeight = currentBowlWeight;
             if (scale.is_ready()) {
                 dispStartingWeight = scale.get_units(10) - driftOffset;
             }
             dispCurrentWeight = dispStartingWeight;
+            
+            startBeeps(2, 100);
             
             feederServo.attach(SERVO_PIN, 500, 2400);
             feederServo.write(SERVO_CLOSED);
@@ -433,7 +433,7 @@ void handleDispenser() {
         case DISPENSE_BULK:
             if (scale.is_ready()) {
                 float newWeight = scale.get_units(3) - driftOffset;
-                if (abs(newWeight - dispCurrentWeight) <= 30.0) dispCurrentWeight = newWeight;
+                dispCurrentWeight = newWeight;
             }
             
             if (dispensed >= (float)targetWeight * 0.80f) { // TRICKLE_START_PCT
@@ -454,7 +454,7 @@ void handleDispenser() {
         case DISPENSE_TRICKLE_OPEN:
             if (scale.is_ready()) {
                 float newWeight = scale.get_units(3) - driftOffset;
-                if (abs(newWeight - dispCurrentWeight) <= 30.0) dispCurrentWeight = newWeight;
+                dispCurrentWeight = newWeight;
             }
             
             if (remaining <= 3.0f) { // IN_FLIGHT_TRICKLE_G
@@ -472,7 +472,7 @@ void handleDispenser() {
         case DISPENSE_TRICKLE_WAIT:
             if (scale.is_ready()) {
                 float newWeight = scale.get_units(3) - driftOffset;
-                if (abs(newWeight - dispCurrentWeight) <= 30.0) dispCurrentWeight = newWeight;
+                dispCurrentWeight = newWeight;
             }
             
             if (remaining <= 3.0f) {
@@ -557,6 +557,7 @@ void handleDispenser() {
 
 void dispenseByWeight() {
     dispState = DISPENSE_INIT; // Starts the state machine
+    dispStartTime = millis();  // Reset start time to prevent immediate timeout
 }
 
 // =============================================================================
