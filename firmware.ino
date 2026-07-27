@@ -93,7 +93,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.1"
+#define FIRMWARE_VERSION  "1.2.2"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -601,8 +601,7 @@ void checkForOTAUpdate() {
   publishOtaStatus("checking");
 
   WiFiClientSecure secureClient;
-  secureClient.setCACert(ISRG_ROOT_X1); // Use Let's Encrypt Root CA
-                              // For production, set a root CA cert instead.
+  secureClient.setInsecure(); // Bypass SSL certificate validation for OTA
 
   HTTPClient http;
   http.begin(secureClient, OTA_VERSION_URL);
