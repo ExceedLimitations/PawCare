@@ -74,14 +74,14 @@ void handleBuzzer() {
             buzzerNextToggle = millis() + buzzerCurrentDuration;
             buzzerIsOn = !buzzerIsOn;
             if (buzzerIsOn) {
-                ledcWriteTone(BUZZER_CHANNEL, 2000); // 2kHz
+                ledcWriteTone(BUZZER_PIN, 2000); // 2kHz
             } else {
-                ledcWriteTone(BUZZER_CHANNEL, 0);
+                ledcWriteTone(BUZZER_PIN, 0);
             }
             buzzerRemainingBeeps--;
             if (buzzerRemainingBeeps == 0) {
                 buzzerIsOn = false;
-                ledcWriteTone(BUZZER_CHANNEL, 0);
+                ledcWriteTone(BUZZER_PIN, 0);
             }
         }
     }
@@ -769,8 +769,7 @@ void setup() {
 
   pinMode(IR_PIN,         INPUT_PULLUP);
   pinMode(BUTTON_PIN,     INPUT_PULLUP);
-  ledcSetup(BUZZER_CHANNEL, 2000, 8);
-  ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
+  ledcAttach(BUZZER_PIN, 2000, 8);
   pinMode(STATUS_LED_PIN, OUTPUT);
   pinMode(ALERT_LED_PIN,  OUTPUT);
   pinMode(TRIG_PIN,       OUTPUT);
@@ -1148,9 +1147,9 @@ void loop() {
       lastBuzzTime = millis();
       buzzerState = !buzzerState;
       if (buzzerState) {
-        ledcWriteTone(BUZZER_CHANNEL, 2000);
+        ledcWriteTone(BUZZER_PIN, 2000);
       } else {
-        ledcWriteTone(BUZZER_CHANNEL, 0);
+        ledcWriteTone(BUZZER_PIN, 0);
       }
     }
   }
