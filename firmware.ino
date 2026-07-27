@@ -2,7 +2,6 @@
 #include <WiFiManager.h>          // tzapu/WiFiManager  — install via Library Manager
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <ESP32Servo.h>
 #include "HX711.h"
 #include <Preferences.h>          // Built-in ESP32 NVS — stores custom params
 #include <HTTPUpdate.h>             // HTTP OTA firmware updates
@@ -164,7 +163,6 @@ unsigned long g_tareFiredAt  = 0;      // millis() timestamp of last tare
 // =============================================================================
 WiFiClient   espClient;
 PubSubClient client(espClient);
-Servo        feederServo;
 HX711        scale;
 Preferences  prefs;
 
@@ -280,12 +278,20 @@ void startWiFiManager(bool forceConfig = false) {
 //  HELPERS
 // =============================================================================
 
+void setServoAngle(int angle) {
+  if (angle < 0) angle = 0;
+  if (angle > 180) angle = 180;
+  // map 0-180 to 410-1966 for 14-bit 50Hz PWM
+  int duty = map(angle, 0, 180, 410, 1966);
+  ledcWrite(SERVO_PIN, duty);
+}
+
 void openHopper() {
-  feederServo.write(SERVO_OPEN);
+  setServoAngle(SERVO_OPEN);
 }
 
 void closeHopper() {
-  feederServo.write(SERVO_CLOSED);
+  setServoAngle(SERVO_CLOSED);
 }
 
 /** Single HC-SR04 ping — returns distance in cm, or 0 on timeout. */
@@ -413,8 +419,7 @@ void handleDispenser() {
             dispCurrentWeight = dispStartingWeight;
             
             startBeeps(2, 100);
-            
-            feederServo.write(SERVO_CLOSED);
+            closeHopper();
             
             dispStartTime = millis();
             dispMotorSettleTime = millis();
@@ -805,8 +810,7 @@ void setup() {
   client.setKeepAlive(60);      // seconds — keeps connection alive
 
   // ── Servo ──────────────────────────────────────────────────────────────────
-  feederServo.setPeriodHertz(50);
-  feederServo.attach(SERVO_PIN, 500, 2400);
+  ledcAttach(SERVO_PIN, 50, 14);
   closeHopper(); // Start at CLOSED (90°) — the idle/default position
   // NOTE: If the servo still twitches at the very moment of power-on, that is a
   // hardware bootloader issue. Add a 10 kΩ pull-down resistor on the signal wire
@@ -1132,6 +1136,7 @@ void loop() {
 
   // ── Non-blocking Jam Buzzer ─────────────────────────────────────────────────
   if (systemJammed) {
+    /*
     static unsigned long lastBuzzTime = 0;
     static bool buzzerState = false;
     if (millis() - lastBuzzTime > 300) {
@@ -1143,6 +1148,7 @@ void loop() {
         ledcWriteTone(BUZZER_PIN, 0);
       }
     }
+    */
   }
   handleBuzzer(); // Handle general async beeps
 
