@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.5"
+#define FIRMWARE_VERSION  "1.2.6"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -413,9 +413,6 @@ void handleDispenser() {
         case DISPENSE_INIT:
             Serial.printf("[Dispense] Target: %dg  — starting two-phase dispense...\n", targetWeight);
             dispStartingWeight = currentBowlWeight;
-            if (scale.is_ready()) {
-                dispStartingWeight = scale.get_units(10) - driftOffset;
-            }
             dispCurrentWeight = dispStartingWeight;
             
             startBeeps(2, 100);
@@ -435,10 +432,7 @@ void handleDispenser() {
             break;
 
         case DISPENSE_BULK:
-            if (scale.is_ready()) {
-                float newWeight = scale.get_units(3) - driftOffset;
-                dispCurrentWeight = newWeight;
-            }
+            dispCurrentWeight = currentBowlWeight;
             
             if (dispensed >= (float)targetWeight * 0.90f) { // TRICKLE_START_PCT
                 closeHopper();
@@ -456,10 +450,7 @@ void handleDispenser() {
             break;
 
         case DISPENSE_TRICKLE_OPEN:
-            if (scale.is_ready()) {
-                float newWeight = scale.get_units(1) - driftOffset;
-                dispCurrentWeight = newWeight;
-            }
+            dispCurrentWeight = currentBowlWeight;
             
             if (remaining <= 0.5f) { // IN_FLIGHT_TRICKLE_G
                 Serial.printf("[Dispense] Target reached in trickle — dispensed %.1fg\n", dispensed);
@@ -474,10 +465,7 @@ void handleDispenser() {
             break;
 
         case DISPENSE_TRICKLE_WAIT:
-            if (scale.is_ready()) {
-                float newWeight = scale.get_units(1) - driftOffset;
-                dispCurrentWeight = newWeight;
-            }
+            dispCurrentWeight = currentBowlWeight;
             
             if (remaining <= 0.5f) {
                 Serial.printf("[Dispense] Target reached in trickle wait — dispensed %.1fg\n", dispensed);
@@ -498,12 +486,7 @@ void handleDispenser() {
             break;
             
         case DISPENSE_EVALUATE:
-            if (scale.is_ready()) {
-                currentBowlWeight = scale.get_units(10) - driftOffset;
-                lastDispensedWeight = currentBowlWeight - dispStartingWeight;
-            } else {
-                lastDispensedWeight = dispCurrentWeight - dispStartingWeight;
-            }
+            lastDispensedWeight = currentBowlWeight - dispStartingWeight;
             
             if (lastDispensedWeight < 0) lastDispensedWeight = 0;
             
@@ -1091,23 +1074,34 @@ void loop() {
   // Defined here (outside both branches) so it is accessible to the else-if below.
   const unsigned long TARE_SETTLE_MS = 1000; // HX711 settle window after a tare
   if (scale.is_ready()) {
-    // 1 sample + manual rolling average to avoid blocking loop
-    static float weightSamples[5] = {0,0,0,0,0};
-    static int sampleIndex = 0;
+    // 3-sample median filter + EMA to aggressively reject spikes (like sudden 0s)
+    static float samples[3] = {0,0,0};
+    static int sIdx = 0;
 
-    // Flush stale samples immediately after a tare so the rolling average
-    // doesn't average old pre-tare readings with the new zeroed readings.
+    float newVal = scale.get_units(1);
+
     if (g_tareJustFired) {
-      float initVal = scale.get_units(1); for (int i = 0; i < 5; i++) weightSamples[i] = initVal;
-      sampleIndex = 0;
+      for (int i = 0; i < 3; i++) samples[i] = newVal;
+      sIdx = 0;
     }
 
-    weightSamples[sampleIndex] = scale.get_units(1);
-    sampleIndex = (sampleIndex + 1) % 5;
+    samples[sIdx] = newVal;
+    sIdx = (sIdx + 1) % 3;
     
-    float rawWeight = 0;
-    for(int i=0; i<5; i++) rawWeight += weightSamples[i];
-    rawWeight /= 5.0;
+    // Find median
+    float s0 = samples[0], s1 = samples[1], s2 = samples[2];
+    if (s0 > s1) { float t = s0; s0 = s1; s1 = t; }
+    if (s1 > s2) { float t = s1; s1 = s2; s2 = t; }
+    if (s0 > s1) { float t = s0; s0 = s1; s1 = t; }
+    
+    float medianWeight = s1;
+    
+    // EMA smoothing
+    static float smoothedWeight = 0;
+    if (g_tareJustFired) smoothedWeight = medianWeight;
+    smoothedWeight = (0.6 * medianWeight) + (0.4 * smoothedWeight);
+    
+    float rawWeight = smoothedWeight;
     
     // Auto-Zero Tracking (AZT)
     // Skip for TARE_SETTLE_MS after a tare — HX711 needs time to settle and we don't
