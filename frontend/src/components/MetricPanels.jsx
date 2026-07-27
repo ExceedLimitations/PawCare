@@ -75,8 +75,8 @@ export function TerminalLog({ logs }) {
         <span className="t-window-title">pawfeed@esp32:~</span>
       </div>
       <div className="terminal">
-        {logs.map((l, i) => (
-          <div key={i} className="terminal-line" style={{ animationDelay: `${i * 0.02}s` }}>
+        {logs.map((l) => (
+          <div key={l.id ?? `${l.time}-${l.msg}`} className="terminal-line" style={{ animationDelay: `${0.02}s` }}>
             <span className="t-time">{l.time}</span>
             <span className={logTypeClass[l.type] || 't-info'}>
               {prefix[l.type] || '[LOG]'} {l.msg}

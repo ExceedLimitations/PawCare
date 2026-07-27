@@ -81,10 +81,10 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
     return ((h * 60 + m) / 1440) * 100;
   };
 
-  const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
+  const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/^24:/, '00:'));
   useEffect(() => {
     const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }));
+      setCurrentTime(new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/^24:/, '00:'));
     }, 10000);
     return () => clearInterval(timer);
   }, []);
@@ -92,8 +92,24 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
   const [hNow, mNow] = currentTime.split(':').map(Number);
   const currentMinutes = hNow * 60 + mNow;
 
+  const MANILA_OFFSET_MS = useMemo(() => {
+    const now = new Date();
+    return new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Manila' })).getTime()
+         - new Date(now.toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+  }, []);
+  const todayManilaDate = new Date(Date.now() + MANILA_OFFSET_MS);
+  const weekday = todayManilaDate.getUTCDay();
+  const isWeekend = weekday === 0 || weekday === 6;
+
+  const isScheduleActiveToday = (s) => {
+    if (!s.enabled) return false;
+    if (s.days === 'weekdays' && isWeekend) return false;
+    if (s.days === 'weekends' && !isWeekend) return false;
+    return true;
+  };
+
   const futureEnabledSchedules = schedules
-    .filter(s => s.enabled)
+    .filter(isScheduleActiveToday)
     .map(s => {
       const [h, m] = s.time.split(':').map(Number);
       const minutes = h * 60 + m;
@@ -144,7 +160,7 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
             const sMinutes = sh * 60 + sm;
 
             let state = 'upcoming';
-            if (!s.enabled) {
+            if (!isScheduleActiveToday(s)) {
               state = 'disabled';
             } else if (sMinutes < currentMinutes) {
               // Compare dates in UTC+8 (Asia/Manila) so the completed/missed state
@@ -343,11 +359,15 @@ export default function App() {
   const [deviceFwVersion, setDeviceFwVersion] = useState(null); // version the ESP32 is currently running
   const [latestFwVersion, setLatestFwVersion] = useState(null); // version available in version.json
   const deviceTimeoutRef = useRef(null);
+  const weightDeltaTimeout = useRef(null);
+  const dispenseTimeoutRef = useRef(null);
   const statusRef = useRef({ food_level: 0, jammed: false, last_dispensed_g: 0, bowl_weight: 0, dispense_success: null });
 
   useEffect(() => {
     return () => {
       if (deviceTimeoutRef.current) clearTimeout(deviceTimeoutRef.current);
+      if (weightDeltaTimeout.current) clearTimeout(weightDeltaTimeout.current);
+      if (dispenseTimeoutRef.current) clearTimeout(dispenseTimeoutRef.current);
     };
   }, []);
 
@@ -368,17 +388,17 @@ export default function App() {
     }).catch(err => console.warn('[Notifications] Failed to save:', err));
   }, [authFetch]);
 
-  const dismissAlert = (id) => {
+  const dismissAlert = useCallback((id) => {
     setAlerts(p => p.filter(a => a.id !== id));
     authFetch(`/notifications/${id}`, { method: 'DELETE' })
       .catch(err => console.warn('[Notifications] Failed to dismiss:', err));
-  };
+  }, [authFetch]);
 
-  const clearAllAlerts = () => {
+  const clearAllAlerts = useCallback(() => {
     setAlerts([]);
     authFetch('/notifications', { method: 'DELETE' })
       .catch(err => console.warn('[Notifications] Failed to clear:', err));
-  };
+  }, [authFetch]);
 
   const handleStatusUpdate = useCallback((newStatus, isLive = true) => {
     if (newStatus.online === false) {
@@ -401,8 +421,9 @@ export default function App() {
       const currentWeight = newStatus.bowl_weight ?? newStatus.last_dispensed_g ?? 0;
       if (oldWeight !== 0 && currentWeight !== oldWeight) {
         // FIX #5: Set delta and auto-clear after 4 s so the badge doesn't linger forever.
+        if (weightDeltaTimeout.current) clearTimeout(weightDeltaTimeout.current);
         setTimeout(() => setWeightDelta(currentWeight - oldWeight), 0);
-        setTimeout(() => setWeightDelta(0), 4000);
+        weightDeltaTimeout.current = setTimeout(() => setWeightDelta(0), 4000);
       }
       const next = { ...prev, ...newStatus };
       statusRef.current = next;
@@ -461,6 +482,7 @@ export default function App() {
     onFeedingsToday: d => setFeedingsToday(d.count || 0),
     onFeedingDone: d => {
       setFeedingsToday(p => p + 1);
+      if (dispenseTimeoutRef.current) clearTimeout(dispenseTimeoutRef.current);
       setFeeding(false);
       setDispenseSuccess(true);
       setTimeout(() => setDispenseSuccess(false), 3000);
@@ -488,7 +510,11 @@ export default function App() {
       // We update chartFeedings directly so the chart stays in sync with live feeds
       // without needing a full re-fetch. (Bug fix: previously updated weeklyFeedings
       // which was a separate, unlinked state that chartFeedings never read from.)
-      const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+      const MANILA_OFFSET_MS = (() => {
+        const now = new Date();
+        return new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Manila' })).getTime()
+             - new Date(now.toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+      })();
       const todayIso = new Date(Date.now() + MANILA_OFFSET_MS).toISOString().slice(0, 10);
       setChartFeedings(prev => {
         // Only patch if the current chart already has date-keyed rows (week/month mode).
@@ -592,6 +618,7 @@ export default function App() {
 
   }, [handleStatusUpdate, isAuthenticated, authFetch]);
 
+
   const triggerManualDispense = () => {
     if (feeding) return;
     setFeeding(true);
@@ -599,9 +626,8 @@ export default function App() {
     emit('feed', { portion: manualPortion, type: 'manual' });
     addLog('info', `Manual dispense triggered — ${manualPortion}g requested to ESP32`);
 
-    // FIX #7: Safety timeout raised to 40 s to outlast the ESP32's own 35 s hard
-    // timeout. The old 15 s allowed double-tapping while a dispense was still running.
-    setTimeout(() => {
+    if (dispenseTimeoutRef.current) clearTimeout(dispenseTimeoutRef.current);
+    dispenseTimeoutRef.current = setTimeout(() => {
       setFeeding(false);
     }, 40000);
   };
@@ -742,10 +768,10 @@ export default function App() {
 
   const fetchChartData = useCallback(async (period) => {
     const endpoint = period === 'day' ? '/feedings/daily' : period === 'month' ? '/feedings/monthly' : '/feedings/weekly';
-    // Start loading — keep old data visible so the chart fades rather than blanks.
     setIsChartLoading(true);
     try {
       const res = await authFetch(endpoint);
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
       const data = await res.json();
       if (Array.isArray(data)) setChartFeedings(data);
     } catch (err) {
@@ -1049,7 +1075,7 @@ export default function App() {
               <input
                 type="number"
                 value={manualPortion}
-                onChange={(e) => { const v = parseInt(e.target.value); setManualPortion(isNaN(v) ? 10 : Math.max(1, v)); }}
+                onChange={(e) => { const v = parseInt(e.target.value); setManualPortion(isNaN(v) ? 10 : Math.min(500, Math.max(1, v))); }}
                 style={{ width: '45px', background: 'transparent', border: 'none', color: 'var(--text-main)', fontSize: '1.1rem', textAlign: 'right', outline: 'none', padding: 0 }}
                 className="font-mono"
               />

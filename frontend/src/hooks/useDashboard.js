@@ -6,44 +6,58 @@ export function useNextFeed(schedules) {
 
   useEffect(() => {
     const calc = () => {
-      // FIX #6: Filter by `days` field to match the server schedule runner's logic.
-      // A weekday-only schedule must not show as "next" on a weekend and vice-versa.
       const nowManila = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
-      const weekday = nowManila.getDay(); // 0=Sun, 6=Sat
-      const isWeekend = weekday === 0 || weekday === 6;
-
-      const enabled = schedules.filter(s => {
-        if (!s.enabled) return false;
-        if (s.days === 'weekdays' && isWeekend) return false;
-        if (s.days === 'weekends' && !isWeekend) return false;
-        return true;
-      });
-      if (!enabled.length) { setNext(null); return; }
-
+      const currentWeekday = nowManila.getDay(); // 0=Sun, 6=Sat
+      
       const now = new Date();
-      // Calculate current time in Manila timezone, matching the server's schedule runner.
       const formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: 'Asia/Manila',
         hour: '2-digit',
         minute: '2-digit',
         hour12: false
       });
-      const [hhStr, mmStr] = formatter.format(now).split(':');
+      const [hhStr, mmStr] = formatter.format(now).replace(/^24:/, '00:').split(':');
       const nowMin = parseInt(hhStr, 10) * 60 + parseInt(mmStr, 10);
 
-      // Build list of minutes-since-midnight for each applicable schedule
-      const candidates = enabled.map(s => {
+      const activeSchedules = schedules.filter(s => s.enabled);
+      if (!activeSchedules.length) { setNext(null); return; }
+
+      let bestDiff = Infinity;
+      let nextRun = null;
+
+      activeSchedules.forEach(s => {
         const [hh, mm] = s.time.split(':').map(Number);
         const mins = hh * 60 + mm;
-        const diff = mins > nowMin ? mins - nowMin : 1440 - nowMin + mins;
-        return { label: s.label, time: s.time, diff };
+        
+        for (let i = 0; i < 7; i++) {
+          const testWeekday = (currentWeekday + i) % 7;
+          const isWeekend = testWeekday === 0 || testWeekday === 6;
+          
+          if (s.days === 'weekdays' && isWeekend) continue;
+          if (s.days === 'weekends' && !isWeekend) continue;
+          
+          let diff;
+          if (i === 0 && mins > nowMin) {
+            diff = mins - nowMin;
+          } else if (i > 0) {
+            diff = (i * 1440) - nowMin + mins;
+          } else {
+            continue;
+          }
+          
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            nextRun = { label: s.label, time: s.time, diff };
+          }
+          break;
+        }
       });
 
-      candidates.sort((a, b) => a.diff - b.diff);
-      const top = candidates[0];
-      const h = Math.floor(top.diff / 60);
-      const m = top.diff % 60;
-      setNext({ h, m, label: top.label, time: top.time });
+      if (!nextRun) { setNext(null); return; }
+
+      const h = Math.floor(nextRun.diff / 60);
+      const m = nextRun.diff % 60;
+      setNext({ h, m, label: nextRun.label, time: nextRun.time });
     };
 
     calc();

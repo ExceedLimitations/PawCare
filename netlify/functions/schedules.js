@@ -33,7 +33,7 @@ exports.handler = async (event) => {
     const entry = {
       label: body.label,
       time: body.time,
-      portion_g: body.portion_g || 80,
+      portion_g: Math.min(500, Math.max(1, parseInt(body.portion_g) || 80)),
       days: body.days || "daily",
       enabled: true,
     };

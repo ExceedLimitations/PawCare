@@ -13,15 +13,10 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch (_) {}
 
-  const portion = parseInt(body.portion) || 80;
+  const portion = Math.min(500, Math.max(1, parseInt(body.portion) || 80));
   const type = body.type || "manual";
 
-  // Publish via HiveMQ REST API (public broker — no auth needed for demo)
-  // The ESP8266/ESP32 firmware subscribes to this topic.
-  const MQTT_TOPIC_CMD =
-    process.env.MQTT_TOPIC_CMD || "pawfeed/command";
-  const MQTT_BROKER_REST =
-    process.env.MQTT_BROKER_REST || "https://broker.hivemq.com:8884/mqtt";
+  const MQTT_TOPIC_CMD = process.env.MQTT_TOPIC_CMD || "pawfeed/command";
 
   // Best-effort MQTT publish via HTTPS — silently ignore failures
   try {
@@ -42,18 +37,18 @@ exports.handler = async (event) => {
     // own direct broker connection when online.
   }
 
+  const id = Date.now().toString();
   const record = {
-    id: Date.now(),
+    id,
     timestamp: new Date().toISOString(),
     portion_g: portion,
     type,
   };
 
-  const { getFirestore } = require("./_firebase");
   const firestore = getFirestore();
   if (firestore) {
     try {
-      await firestore.collection("feedings").doc(record.id.toString()).set(record);
+      await firestore.collection("feedings").doc(id).set(record);
     } catch (err) {
       console.warn("[Firebase] Error saving feed from Netlify:", err.message);
     }

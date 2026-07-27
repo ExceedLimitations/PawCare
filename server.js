@@ -189,6 +189,10 @@ app.post("/feed", authenticate, feedLimiter, async (req, res) => {
     type,
   };
 
+  if (!mqttClient.connected) {
+    return res.status(503).json({ success: false, error: "MQTT broker not connected" });
+  }
+
   mqttClient.publish(
     TOPIC_CMD,
     JSON.stringify({ action: "feed", portion_g: portion }),
@@ -196,8 +200,7 @@ app.post("/feed", authenticate, feedLimiter, async (req, res) => {
     async (err) => {
       if (err) {
         console.error("[Feed] MQTT publish failed:", err.message);
-        // The response has already been sent, so just log — can't send another.
-        return;
+        return res.status(502).json({ success: false, error: "MQTT publish failed" });
       }
       try {
         await firestoreDb.collection("feedings").doc(record.id).set(record);
@@ -206,11 +209,9 @@ app.post("/feed", authenticate, feedLimiter, async (req, res) => {
       } catch (dbErr) {
         console.error("[Firebase] Error saving feed:", dbErr.message);
       }
+      return res.json({ success: true, ...record });
     }
   );
-
-  // Respond immediately so the dashboard is not blocked waiting for the MQTT ack.
-  return res.json({ success: true, ...record });
 });
 
 const getLocalCutoffISO = (daysBack = 0) => {
@@ -260,7 +261,7 @@ async function aggregateFeedings(res, daysBack, keyFn, sortFn) {
     return Object.values(result).sort(sortFn);
   } catch (err) {
     console.error("[Firebase] Error fetching aggregated feedings:", err.message);
-    res.status(500).json({ error: "Database error" });
+    if (!res.headersSent) res.status(500).json({ error: "Database error" });
     return null;
   }
 }
@@ -550,8 +551,14 @@ io.on("connection", async (socket) => {
       return;
     }
 
-    const portion = parseInt(data?.portion) || 45;
+    const portion = Math.min(500, Math.max(1, parseInt(data?.portion) || 45));
     const type = data?.type || "manual";
+
+    if (!mqttClient.connected) {
+      socket.emit("error", { message: "MQTT broker not connected. Cannot dispense." });
+      return;
+    }
+
     mqttClient.publish(
       TOPIC_CMD,
       JSON.stringify({ action: "feed", portion_g: portion }),
@@ -755,7 +762,7 @@ setInterval(async () => {
 
     // Use the same 25 s freshness window as the heartbeat emitter so a feed
     // is never skipped due to normal MQTT relay latency.
-    const isDeviceOnline = (Date.now() - lastSeenDevice < 25000);
+    const isDeviceOnline = lastSeenDevice > 0 && (Date.now() - lastSeenDevice < 25000);
     if (!isDeviceOnline) {
       console.log(`[Schedule] "${s.label}" skipped at ${hhmm} — device is offline.`);
       continue;

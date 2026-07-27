@@ -9,7 +9,15 @@ exports.handler = async (event) => {
   const firestore = getFirestore();
   if (!firestore) return json(500, { error: "Database unavailable" });
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Compute UTC midnight for the configured timezone so "today" is correct
+  // regardless of where the Netlify Lambda happens to run.
+  const LOCAL_TZ = process.env.TZ || "Asia/Manila";
+  const now = new Date();
+  const offsetMs = new Date(now.toLocaleString("en-US", { timeZone: LOCAL_TZ })).getTime()
+                 - new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
+  const localNow = new Date(now.getTime() + offsetMs);
+  localNow.setUTCHours(0, 0, 0, 0);
+  const today = new Date(localNow.getTime() - offsetMs).toISOString();
 
   try {
     const snap = await firestore.collection("feedings").where("timestamp", ">=", today).get();
