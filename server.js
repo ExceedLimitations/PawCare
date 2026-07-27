@@ -8,14 +8,28 @@ const { Server } = require("socket.io");
 const path = require("path");
 const fs = require("fs");
 const mqtt = require("mqtt");
-const admin = require("firebase-admin");
+const { initializeApp, cert } = require("firebase-admin/app");
+const { getFirestore } = require("firebase-admin/firestore");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 
 let firestoreDb = null;
 try {
-  admin.initializeApp();
-  firestoreDb = admin.firestore();
+  let appOptions = {};
+  
+  // Allow passing the service account JSON string directly via an environment variable, 
+  // which is useful on PaaS like Render where uploading files can be tricky.
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      appOptions.credential = cert(serviceAccount);
+    } catch (parseErr) {
+      console.error("[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT environment variable:", parseErr.message);
+    }
+  }
+
+  initializeApp(appOptions);
+  firestoreDb = getFirestore();
   console.log("[Firebase] SDK initialized — testing live Firestore connection...");
   // Async connectivity probe — runs after server starts
   (async () => {
@@ -30,7 +44,7 @@ try {
     }
   })();
 } catch (err) {
-  console.error("[Firebase] Could not initialize Firebase Admin. Please set GOOGLE_APPLICATION_CREDENTIALS.", err.message);
+  console.error("[Firebase] Could not initialize Firebase Admin. Check your GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT env var.", err.message);
   process.exit(1);
 }
 
