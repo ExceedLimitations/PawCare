@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.4"
+#define FIRMWARE_VERSION  "1.2.5"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -440,10 +440,10 @@ void handleDispenser() {
                 dispCurrentWeight = newWeight;
             }
             
-            if (dispensed >= (float)targetWeight * 0.80f) { // TRICKLE_START_PCT
+            if (dispensed >= (float)targetWeight * 0.90f) { // TRICKLE_START_PCT
                 closeHopper();
                 Serial.printf("[Dispense] Phase 2 — trickle at %.1fg (%.0f%% of %dg target)\n",
-                              dispensed, 80.0, targetWeight);
+                              dispensed, 90.0, targetWeight);
                 dispState = DISPENSE_TRICKLE_OPEN;
                 dispTrickleTimer = millis();
             } else if (millis() - dispMotorSettleTime > 1100 && remaining <= 0.0f) {
@@ -457,16 +457,16 @@ void handleDispenser() {
 
         case DISPENSE_TRICKLE_OPEN:
             if (scale.is_ready()) {
-                float newWeight = scale.get_units(3) - driftOffset;
+                float newWeight = scale.get_units(1) - driftOffset;
                 dispCurrentWeight = newWeight;
             }
             
-            if (remaining <= 3.0f) { // IN_FLIGHT_TRICKLE_G
+            if (remaining <= 0.5f) { // IN_FLIGHT_TRICKLE_G
                 Serial.printf("[Dispense] Target reached in trickle — dispensed %.1fg\n", dispensed);
                 dispState = DISPENSE_FINAL_SETTLE;
                 closeHopper();
                 dispTrickleTimer = millis();
-            } else if (millis() - dispTrickleTimer > 150) { // TRICKLE_OPEN_MS
+            } else if (millis() - dispTrickleTimer > 100) { // TRICKLE_OPEN_MS
                 closeHopper();
                 dispState = DISPENSE_TRICKLE_WAIT;
                 dispTrickleTimer = millis();
@@ -475,16 +475,16 @@ void handleDispenser() {
 
         case DISPENSE_TRICKLE_WAIT:
             if (scale.is_ready()) {
-                float newWeight = scale.get_units(3) - driftOffset;
+                float newWeight = scale.get_units(1) - driftOffset;
                 dispCurrentWeight = newWeight;
             }
             
-            if (remaining <= 3.0f) {
+            if (remaining <= 0.5f) {
                 Serial.printf("[Dispense] Target reached in trickle wait — dispensed %.1fg\n", dispensed);
                 dispState = DISPENSE_FINAL_SETTLE;
                 closeHopper();
                 dispTrickleTimer = millis();
-            } else if (millis() - dispTrickleTimer > 250) { // TRICKLE_CLOSE_MS
+            } else if (millis() - dispTrickleTimer > 350) { // TRICKLE_CLOSE_MS
                 openHopper();
                 dispState = DISPENSE_TRICKLE_OPEN;
                 dispTrickleTimer = millis();
