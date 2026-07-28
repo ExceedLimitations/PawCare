@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.9"
+#define FIRMWARE_VERSION  "1.3.0"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -407,6 +407,7 @@ void handleDispenser() {
         return;
     }
 
+    dispCurrentWeight = currentBowlWeight;
     float dispensed = dispCurrentWeight - dispStartingWeight;
     float remaining = (float)targetWeight - dispensed;
 
@@ -433,8 +434,6 @@ void handleDispenser() {
             break;
 
         case DISPENSE_BULK:
-            dispCurrentWeight = currentBowlWeight;
-            
             if (dispensed >= (float)targetWeight * 0.90f) { // TRICKLE_START_PCT
                 closeHopper();
                 Serial.printf("[Dispense] Phase 2 — trickle at %.1fg (%.0f%% of %dg target)\n",
@@ -451,8 +450,6 @@ void handleDispenser() {
             break;
 
         case DISPENSE_TRICKLE_OPEN:
-            dispCurrentWeight = currentBowlWeight;
-            
             if (remaining <= 0.5f) { // IN_FLIGHT_TRICKLE_G
                 Serial.printf("[Dispense] Target reached in trickle — dispensed %.1fg\n", dispensed);
                 dispState = DISPENSE_FINAL_SETTLE;
@@ -466,8 +463,6 @@ void handleDispenser() {
             break;
 
         case DISPENSE_TRICKLE_WAIT:
-            dispCurrentWeight = currentBowlWeight;
-            
             if (remaining <= 0.5f) {
                 Serial.printf("[Dispense] Target reached in trickle wait — dispensed %.1fg\n", dispensed);
                 dispState = DISPENSE_FINAL_SETTLE;
@@ -977,60 +972,65 @@ void loop() {
   //   #define HOPPER_FULL_CM  2   (adjust if needed)
   //   #define HOPPER_EMPTY_CM 20  (measure your hopper depth and update)
 
-  int dist = getDistance(); // median of 3 pings
-  static int  sensorFailCount    = 0;
-  static bool sensorAlerted      = false;
-  static int  lastValidDist      = HOPPER_FULL_CM; // Assume full on boot
-  // Change-guard counters: require N consecutive identical conclusions
-  // before committing a level change. Prevents dispensing turbulence from
-  // causing a momentary 0% spike.
-  static int  zeroConfirmCount   = 0;  // consecutive timeouts leaning toward empty
-  static int  fullConfirmCount   = 0;  // consecutive timeouts leaning toward full
-  static const int CONFIRM_NEEDED = 5; // raised from 3 — needs 5 consecutive timeouts before committing
+  // Skip while actively dispensing — getDistance() blocks up to ~110ms per call,
+  // which was starving the dispense state machine of frequent weight checks
+  // exactly when precision mattered most.
+  if (dispState == DISPENSE_IDLE) {
+    int dist = getDistance(); // median of 3 pings
+    static int  sensorFailCount    = 0;
+    static bool sensorAlerted      = false;
+    static int  lastValidDist      = HOPPER_FULL_CM; // Assume full on boot
+    // Change-guard counters: require N consecutive identical conclusions
+    // before committing a level change. Prevents dispensing turbulence from
+    // causing a momentary 0% spike.
+    static int  zeroConfirmCount   = 0;  // consecutive timeouts leaning toward empty
+    static int  fullConfirmCount   = 0;  // consecutive timeouts leaning toward full
+    static const int CONFIRM_NEEDED = 5; // raised from 3 — needs 5 consecutive timeouts before committing
 
-  if (dist == 0) {
-    // Timeout (dist == 0): two cases —
-    //   A) Food is touching or very close to the sensor mesh → sensor cannot echo → full
-    //   B) Hopper is empty and the angled plastic bottom scatters the pulse → empty
-    // Use the last valid measured distance as a hint.
-    if (lastValidDist <= HOPPER_FULL_CM + 2) {
-      // Last reading was very short = food was near the top = likely still full
-      fullConfirmCount++;
+    if (dist == 0) {
+      // Timeout (dist == 0): two cases —
+      //   A) Food is touching or very close to the sensor mesh → sensor cannot echo → full
+      //   B) Hopper is empty and the angled plastic bottom scatters the pulse → empty
+      // Use the last valid measured distance as a hint.
+      if (lastValidDist <= HOPPER_FULL_CM + 2) {
+        // Last reading was very short = food was near the top = likely still full
+        fullConfirmCount++;
+        zeroConfirmCount = 0;
+        if (fullConfirmCount >= CONFIRM_NEEDED) {
+          lastValidLevel = 100;
+          fullConfirmCount = CONFIRM_NEEDED; // clamp
+        }
+      } else {
+        // Last reading was far away = food was low = lean toward empty, but hold level
+        // until CONFIRM_NEEDED consecutive timeouts confirm it
+        zeroConfirmCount++;
+        fullConfirmCount = 0;
+        if (zeroConfirmCount >= CONFIRM_NEEDED) {
+          lastValidLevel = 0;
+          zeroConfirmCount = CONFIRM_NEEDED; // clamp
+        }
+        // Not yet confirmed — keep displaying the last good level
+      }
+      sensorFailCount = 0;
+      sensorAlerted   = false;
+    } else if (dist > 0 && dist < 200) {
+      // Good reading — map distance to percentage and update immediately
+      lastValidDist    = dist;
+      // map(): short distance (food near top) = high %, long distance (food low) = low %
+      lastValidLevel   = constrain(map(dist, HOPPER_FULL_CM, HOPPER_EMPTY_CM, 100, 0), 0, 100);
       zeroConfirmCount = 0;
-      if (fullConfirmCount >= CONFIRM_NEEDED) {
-        lastValidLevel = 100;
-        fullConfirmCount = CONFIRM_NEEDED; // clamp
-      }
-    } else {
-      // Last reading was far away = food was low = lean toward empty, but hold level
-      // until CONFIRM_NEEDED consecutive timeouts confirm it
-      zeroConfirmCount++;
       fullConfirmCount = 0;
-      if (zeroConfirmCount >= CONFIRM_NEEDED) {
-        lastValidLevel = 0;
-        zeroConfirmCount = CONFIRM_NEEDED; // clamp
+      sensorFailCount  = 0;
+      sensorAlerted    = false;
+    } else {
+      // Reading is out of expected range (>= 200 cm) — likely electrical noise
+      sensorFailCount++;
+      if (sensorFailCount >= 15 && !sensorAlerted) {
+        triggerFlowchartAlert("SENSOR FAULT: Ultrasonic Sensor Error.");
+        sensorAlerted = true;
       }
-      // Not yet confirmed — keep displaying the last good level
+      if (sensorFailCount > 1000) sensorFailCount = 15; // prevent overflow
     }
-    sensorFailCount = 0;
-    sensorAlerted   = false;
-  } else if (dist > 0 && dist < 200) {
-    // Good reading — map distance to percentage and update immediately
-    lastValidDist    = dist;
-    // map(): short distance (food near top) = high %, long distance (food low) = low %
-    lastValidLevel   = constrain(map(dist, HOPPER_FULL_CM, HOPPER_EMPTY_CM, 100, 0), 0, 100);
-    zeroConfirmCount = 0;
-    fullConfirmCount = 0;
-    sensorFailCount  = 0;
-    sensorAlerted    = false;
-  } else {
-    // Reading is out of expected range (>= 200 cm) — likely electrical noise
-    sensorFailCount++;
-    if (sensorFailCount >= 15 && !sensorAlerted) {
-      triggerFlowchartAlert("SENSOR FAULT: Ultrasonic Sensor Error.");
-      sensorAlerted = true;
-    }
-    if (sensorFailCount > 1000) sensorFailCount = 15; // prevent overflow
   }
 
   // ── State machine / alerts ──────────────────────────────────────────────────
