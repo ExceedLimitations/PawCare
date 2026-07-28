@@ -975,17 +975,18 @@ void loop() {
   // Skip while actively dispensing — getDistance() blocks up to ~110ms per call,
   // which was starving the dispense state machine of frequent weight checks
   // exactly when precision mattered most.
+  static int  sensorFailCount    = 0;
+  static bool sensorAlerted      = false;
+  static int  lastValidDist      = HOPPER_FULL_CM; // Assume full on boot
+  // Change-guard counters: require N consecutive identical conclusions
+  // before committing a level change. Prevents dispensing turbulence from
+  // causing a momentary 0% spike.
+  static int  zeroConfirmCount   = 0;  // consecutive timeouts leaning toward empty
+  static int  fullConfirmCount   = 0;  // consecutive timeouts leaning toward full
+  static const int CONFIRM_NEEDED = 5; // raised from 3 — needs 5 consecutive timeouts before committing
+
   if (dispState == DISPENSE_IDLE) {
     int dist = getDistance(); // median of 3 pings
-    static int  sensorFailCount    = 0;
-    static bool sensorAlerted      = false;
-    static int  lastValidDist      = HOPPER_FULL_CM; // Assume full on boot
-    // Change-guard counters: require N consecutive identical conclusions
-    // before committing a level change. Prevents dispensing turbulence from
-    // causing a momentary 0% spike.
-    static int  zeroConfirmCount   = 0;  // consecutive timeouts leaning toward empty
-    static int  fullConfirmCount   = 0;  // consecutive timeouts leaning toward full
-    static const int CONFIRM_NEEDED = 5; // raised from 3 — needs 5 consecutive timeouts before committing
 
     if (dist == 0) {
       // Timeout (dist == 0): two cases —
