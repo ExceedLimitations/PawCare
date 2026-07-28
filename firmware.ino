@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.6"
+#define FIRMWARE_VERSION  "1.2.7"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -536,6 +536,13 @@ void handleDispenser() {
         lastDispenseTelemetry = millis();
         currentBowlWeight = dispCurrentWeight;
         sendTelemetry(lastValidLevel);
+    }
+
+    static unsigned long lastDebugPrint = 0;
+    if ((dispState == DISPENSE_BULK || dispState == DISPENSE_TRICKLE_OPEN || dispState == DISPENSE_TRICKLE_WAIT) && millis() - lastDebugPrint >= 500) {
+        lastDebugPrint = millis();
+        float dispensed = currentBowlWeight - dispStartingWeight;
+        Serial.printf("[Debug] Dispensing... dispensed: %.1fg (currentBowlWeight: %.1fg, target: %dg)\n", dispensed, currentBowlWeight, targetWeight);
     }
 }
 
@@ -1113,11 +1120,15 @@ void loop() {
 
       float adjustedWeight = rawWeight - driftOffset;
       
-      // If the weight is between -5g and +5g, it's likely just drift/crumbs
-      if (abs(adjustedWeight) < 5.0) {
-        // Slowly pull the offset towards the raw weight to absorb the drift
-        driftOffset += adjustedWeight * 0.1;
-        currentBowlWeight = 0.0; // Snap to 0 for telemetry
+      if (dispState == DISPENSE_IDLE) {
+        // If the weight is between -5g and +5g, it's likely just drift/crumbs
+        if (abs(adjustedWeight) < 5.0) {
+          // Slowly pull the offset towards the raw weight to absorb the drift
+          driftOffset += adjustedWeight * 0.1;
+          currentBowlWeight = 0.0; // Snap to 0 for telemetry
+        } else {
+          currentBowlWeight = adjustedWeight;
+        }
       } else {
         currentBowlWeight = adjustedWeight;
       }
