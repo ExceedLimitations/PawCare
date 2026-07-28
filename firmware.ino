@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.7"
+#define FIRMWARE_VERSION  "1.2.8"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -392,6 +392,7 @@ unsigned long dispMotorSettleTime = 0;
 unsigned long dispTrickleTimer = 0;
 unsigned long dispJamTimer = 0;
 bool          dispIrBlocked = false;
+int           dispJamBlockedCount = 0;
 unsigned long lastDispenseTelemetry = 0;
 
 void handleDispenser() {
@@ -438,7 +439,7 @@ void handleDispenser() {
                 closeHopper();
                 Serial.printf("[Dispense] Phase 2 — trickle at %.1fg (%.0f%% of %dg target)\n",
                               dispensed, 90.0, targetWeight);
-                dispState = DISPENSE_TRICKLE_OPEN;
+                dispState = DISPENSE_TRICKLE_WAIT;
                 dispTrickleTimer = millis();
             } else if (millis() - dispMotorSettleTime > 1100 && remaining <= 0.0f) {
                 // Exit condition during bulk
@@ -457,7 +458,7 @@ void handleDispenser() {
                 dispState = DISPENSE_FINAL_SETTLE;
                 closeHopper();
                 dispTrickleTimer = millis();
-            } else if (millis() - dispTrickleTimer > 100) { // TRICKLE_OPEN_MS
+            } else if (millis() - dispTrickleTimer > 40) { // TRICKLE_OPEN_MS
                 closeHopper();
                 dispState = DISPENSE_TRICKLE_WAIT;
                 dispTrickleTimer = millis();
@@ -507,26 +508,31 @@ void handleDispenser() {
     // ── Jam detection (only when dispensing) ──
     if (dispState == DISPENSE_BULK || dispState == DISPENSE_TRICKLE_OPEN || dispState == DISPENSE_TRICKLE_WAIT) {
         if (digitalRead(IR_PIN) == LOW) { // IR_JAM_STATE
-            if (!dispIrBlocked) {
-                dispIrBlocked = true;
-                dispJamTimer = millis();
-            } else if (millis() - dispJamTimer > 1500) { // jamTimeout
-                Serial.println("[JAM] Anti-jam sequence triggered.");
-                closeHopper();
-                delay(1000); // Wait, this blocks slightly! Let's keep delay inside anti-jam for simplicity as it's an edge case, or rewrite. For now short delays in jam routine are ok.
-                openHopper();
-                delay(1000);
-                if (digitalRead(IR_PIN) == LOW) {
-                    systemJammed = true;
-                    triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
-                    dispState = DISPENSE_FINAL_SETTLE; // abort
+            dispJamBlockedCount++;
+            if (dispJamBlockedCount >= 5) {
+                if (!dispIrBlocked) {
+                    dispIrBlocked = true;
+                    dispJamTimer = millis();
+                } else if (millis() - dispJamTimer > 1500) { // jamTimeout
+                    Serial.println("[JAM] Anti-jam sequence triggered.");
                     closeHopper();
-                    dispTrickleTimer = millis();
-                } else {
-                    dispIrBlocked = false;
+                    delay(1000); // Wait, this blocks slightly! Let's keep delay inside anti-jam for simplicity as it's an edge case, or rewrite. For now short delays in jam routine are ok.
+                    openHopper();
+                    delay(1000);
+                    if (digitalRead(IR_PIN) == LOW) {
+                        systemJammed = true;
+                        triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
+                        dispState = DISPENSE_FINAL_SETTLE; // abort
+                        closeHopper();
+                        dispTrickleTimer = millis();
+                    } else {
+                        dispIrBlocked = false;
+                        dispJamBlockedCount = 0;
+                    }
                 }
             }
         } else {
+            dispJamBlockedCount = 0;
             dispIrBlocked = false;
         }
     }
@@ -1043,25 +1049,33 @@ void loop() {
   // ── Passive jam & Auto-Clear ────────────────────────────────────────────────
   static unsigned long passiveJamStart = 0;
   static bool isIrBlockedPassive = false;
+  static int irBlockedCount = 0;
+  static const int IR_JAM_DEBOUNCE_READINGS = 20;
 
   if (digitalRead(IR_PIN) == IR_JAM_STATE) {
-    if (!isIrBlockedPassive) {
-      isIrBlockedPassive = true;
-      passiveJamStart = millis();
-    } else if (millis() - passiveJamStart > 3000) {
-      if (!systemJammed) {
-        Serial.println("[JAM] Passive jam detected!");
-        systemJammed = true;
-        triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
+    irBlockedCount++;
+    if (irBlockedCount >= IR_JAM_DEBOUNCE_READINGS) {
+      if (!isIrBlockedPassive) {
+        isIrBlockedPassive = true;
+        passiveJamStart = millis();
+      } else if (millis() - passiveJamStart > 3000) {
+        if (!systemJammed) {
+          Serial.println("[JAM] Passive jam detected!");
+          systemJammed = true;
+          triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
+        }
       }
     }
   } else {
-    isIrBlockedPassive = false;
-    // Auto-clear jam if the blockage is physically removed
-    if (systemJammed) {
-      Serial.println("[JAM] Blockage cleared. System automatically recovered.");
-      systemJammed = false;
-      sendTelemetry(lastValidLevel);
+    irBlockedCount = 0;
+    if (isIrBlockedPassive) {
+      isIrBlockedPassive = false;
+      // Auto-clear jam if the blockage is physically removed
+      if (systemJammed) {
+        Serial.println("[JAM] Blockage cleared. System automatically recovered.");
+        systemJammed = false;
+        sendTelemetry(lastValidLevel);
+      }
     }
   }
 
@@ -1130,7 +1144,7 @@ void loop() {
           currentBowlWeight = adjustedWeight;
         }
       } else {
-        currentBowlWeight = adjustedWeight;
+        currentBowlWeight = medianWeight - driftOffset;
       }
     }
   } else if (g_tareJustFired && (millis() - g_tareFiredAt >= TARE_SETTLE_MS)) {
