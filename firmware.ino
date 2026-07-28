@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.2.8"
+#define FIRMWARE_VERSION  "1.2.9"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -506,6 +506,8 @@ void handleDispenser() {
     }
 
     // ── Jam detection (only when dispensing) ──
+    static float dispJamLastWeight = 0;
+
     if (dispState == DISPENSE_BULK || dispState == DISPENSE_TRICKLE_OPEN || dispState == DISPENSE_TRICKLE_WAIT) {
         if (digitalRead(IR_PIN) == LOW) { // IR_JAM_STATE
             dispJamBlockedCount++;
@@ -513,21 +515,30 @@ void handleDispenser() {
                 if (!dispIrBlocked) {
                     dispIrBlocked = true;
                     dispJamTimer = millis();
+                    dispJamLastWeight = currentBowlWeight;
                 } else if (millis() - dispJamTimer > 1500) { // jamTimeout
-                    Serial.println("[JAM] Anti-jam sequence triggered.");
-                    closeHopper();
-                    delay(1000); // Wait, this blocks slightly! Let's keep delay inside anti-jam for simplicity as it's an edge case, or rewrite. For now short delays in jam routine are ok.
-                    openHopper();
-                    delay(1000);
-                    if (digitalRead(IR_PIN) == LOW) {
-                        systemJammed = true;
-                        triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
-                        dispState = DISPENSE_FINAL_SETTLE; // abort
-                        closeHopper();
-                        dispTrickleTimer = millis();
+                    if (currentBowlWeight - dispJamLastWeight > 0.5) {
+                        // False positive: food is flowing normally (weight increasing). Reset timer.
+                        dispJamTimer = millis();
+                        dispJamLastWeight = currentBowlWeight;
                     } else {
-                        dispIrBlocked = false;
-                        dispJamBlockedCount = 0;
+                        Serial.println("[JAM] Anti-jam sequence triggered.");
+                        closeHopper();
+                        delay(800); // Give servo time to crush any kibble in the gate
+                        if (digitalRead(IR_PIN) == LOW) {
+                            systemJammed = true;
+                            triggerFlowchartAlert("CRITICAL FAULT: Mechanical Jam Detected.");
+                            dispState = DISPENSE_FINAL_SETTLE; // abort
+                            closeHopper();
+                            dispTrickleTimer = millis();
+                        } else {
+                            Serial.println("[JAM] Blockage cleared. Resuming dispense.");
+                            dispIrBlocked = false;
+                            dispJamBlockedCount = 0;
+                            if (dispState == DISPENSE_BULK || dispState == DISPENSE_TRICKLE_OPEN) {
+                                openHopper();
+                            }
+                        }
                     }
                 }
             }
