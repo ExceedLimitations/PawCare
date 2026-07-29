@@ -63,8 +63,7 @@ const BowlSVG = ({ weight }) => {
           width="80"
           height="40"
           fill={fillStatusColor}
-          clipPath="url(#bowl-clip-inner)"
-          style={{ transition: 'y 1s cubic-bezier(0.4, 0, 0.2, 1)' }}
+          clipPath={`url(${typeof window !== 'undefined' ? window.location.href.split('#')[0] : ''}#bowl-clip-inner)`}
         />
       )}
 
