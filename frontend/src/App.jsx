@@ -26,14 +26,16 @@ const HopperSVG = ({ percentage }) => {
   const height = 120;
   const h = Math.max(0, Math.min(100, perc)) * (height / 100);
   const fillStatusColor = perc <= 20 ? "var(--status-error)" : perc <= 50 ? "var(--status-warning)" : "var(--status-ok)";
+  const topY = 140 - h;
+  const leftX = 35 - 0.125 * h;
+  const rightX = 65 + 0.125 * h;
 
   return (
     <svg viewBox="0 0 100 160" className="hopper-svg" style={{ width: '60px', height: '120px' }}>
-      <clipPath id="hopper-clip-inner">
-        <path d="M 20 20 L 80 20 L 65 140 L 35 140 Z" />
-      </clipPath>
       <path d="M 20 20 L 80 20 L 65 140 L 35 140 Z" fill="var(--bg-muted)" />
-      <rect x="0" y={140 - h} width="100" height={h} fill={fillStatusColor} clipPath="url(#hopper-clip-inner)" style={{ transition: 'y 1s ease, height 1s ease, fill 1s ease' }} />
+      {h > 0 && (
+        <path d={`M ${leftX} ${topY} L ${rightX} ${topY} L 65 140 L 35 140 Z`} fill={fillStatusColor} style={{ transition: 'fill 0.5s ease' }} />
+      )}
       <path d="M 20 20 L 80 20 L 65 140 L 35 140 Z" fill="none" stroke="var(--border-dark)" strokeWidth="3" strokeLinejoin="round" />
       <line x1="25" y1="60" x2="35" y2="60" stroke="var(--border-dark)" strokeWidth="2" />
       <line x1="29" y1="100" x2="39" y2="100" stroke="var(--border-dark)" strokeWidth="2" />
