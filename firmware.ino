@@ -382,9 +382,9 @@ void sendOnlineStatus() {
  */
 
 // ── Non-Blocking Dispenser State Machine ───────────────────────────────────
-#define PULSE_MS_PER_GRAM 20
-#define PULSE_MIN_MS 40
-#define PULSE_MAX_MS 600
+#define PULSE_MS_PER_GRAM 8     // ms per gram. Lowered from 20 to dispense less per pulse.
+#define PULSE_MIN_MS 40         // minimum pulse duration
+#define PULSE_MAX_MS 300        // lowered from 600 to ensure the first bulk drop isn't too huge
 #define PULSE_SETTLE_MS 450
 #define DISPENSE_DONE_G 0.5
 
