@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.6"
+#define FIRMWARE_VERSION  "1.3.7"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -951,7 +951,7 @@ void loop() {
     // so publishing here too would create duplicate Firestore records.
     if (wasPhysical) {
       StaticJsonDocument<128> feedDoc;
-      feedDoc["portion_g"] = lastDispensedWeight > 0 ? (int)round(lastDispensedWeight) : targetWeight;
+      feedDoc["portion_g"] = targetWeight; // Always log the requested target for physical dispenses
       feedDoc["type"]      = "physical";
       char feedBuf[128];
       serializeJson(feedDoc, feedBuf);
