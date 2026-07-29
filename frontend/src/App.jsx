@@ -348,7 +348,6 @@ export default function App() {
   const [feeding, setFeeding] = useState(false);
   const [dispenseSuccess, setDispenseSuccess] = useState(false);
   const [alerts, setAlerts] = useState([]);
-  const [weightDelta, setWeightDelta] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newSchedule, setNewSchedule] = useState({ label: '', time: '08:00', portion_g: 45, days: 'daily' });
   const [lastSyncTime, setLastSyncTime] = useState('—');
@@ -359,14 +358,12 @@ export default function App() {
   const [deviceFwVersion, setDeviceFwVersion] = useState(null); // version the ESP32 is currently running
   const [latestFwVersion, setLatestFwVersion] = useState(null); // version available in version.json
   const deviceTimeoutRef = useRef(null);
-  const weightDeltaTimeout = useRef(null);
   const dispenseTimeoutRef = useRef(null);
   const statusRef = useRef({ food_level: 0, jammed: false, last_dispensed_g: 0, bowl_weight: 0, dispense_success: null });
 
   useEffect(() => {
     return () => {
       if (deviceTimeoutRef.current) clearTimeout(deviceTimeoutRef.current);
-      if (weightDeltaTimeout.current) clearTimeout(weightDeltaTimeout.current);
       if (dispenseTimeoutRef.current) clearTimeout(dispenseTimeoutRef.current);
     };
   }, []);
@@ -419,12 +416,6 @@ export default function App() {
     setStatus(prev => {
       const oldWeight = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
       const currentWeight = newStatus.bowl_weight ?? newStatus.last_dispensed_g ?? 0;
-      if (oldWeight !== 0 && currentWeight !== oldWeight) {
-        // FIX #5: Set delta and auto-clear after 4 s so the badge doesn't linger forever.
-        if (weightDeltaTimeout.current) clearTimeout(weightDeltaTimeout.current);
-        setTimeout(() => setWeightDelta(currentWeight - oldWeight), 0);
-        weightDeltaTimeout.current = setTimeout(() => setWeightDelta(0), 4000);
-      }
       const next = { ...prev, ...newStatus };
       statusRef.current = next;
       return next;
@@ -1006,11 +997,6 @@ export default function App() {
                   <span className="metric-unit">g</span>
                 </div>
                 <div className="metric-label">BOWL LOAD</div>
-                {weightDelta !== 0 && (
-                  <div className={`bowl-weight-delta font-mono ${weightDelta > 0 ? 'positive' : 'negative'}`}>
-                    {weightDelta > 0 ? `+${weightDelta.toFixed(0)}g` : `${weightDelta.toFixed(0)}g`}
-                  </div>
-                )}
               </div>
             </div>
           </div>

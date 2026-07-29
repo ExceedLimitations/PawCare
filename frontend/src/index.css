@@ -199,9 +199,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 .metric-unit  { font-size: 0.85rem; font-weight: 500; color: var(--text-muted); margin-left: 2px; }
 .metric-label { font-size: 0.65rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-top: 6px; }
 
-.bowl-weight-delta { font-size: 0.72rem; font-weight: 700; margin-top: 6px; padding: 3px 8px; border-radius: 6px; display: inline-block; }
-.bowl-weight-delta.positive { background: var(--status-ok-bg);    color: var(--status-ok); }
-.bowl-weight-delta.negative { background: var(--status-error-bg); color: var(--status-error); }
+
 
 /* ── Telemetry List ── */
 .telemetry-list { display: flex; flex-direction: column; gap: 0; }
