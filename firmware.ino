@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.5"
+#define FIRMWARE_VERSION  "1.3.6"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -383,7 +383,7 @@ void sendOnlineStatus() {
 
 // ── Non-Blocking Dispenser State Machine ───────────────────────────────────
 #define PULSE_MS_PER_GRAM 8     // ms per gram. Lowered from 20 to dispense less per pulse.
-#define PULSE_MIN_MS 80         // decreased to 80 as requested
+#define PULSE_MIN_MS 100        // increased to 100 as requested
 #define PULSE_MAX_MS 300        // lowered from 600 to ensure the first bulk drop isn't too huge
 #define PULSE_SETTLE_MS 450
 #define DISPENSE_DONE_G 0.5
