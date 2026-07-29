@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.1"
+#define FIRMWARE_VERSION  "1.3.2"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
@@ -382,7 +382,13 @@ void sendOnlineStatus() {
  */
 
 // ── Non-Blocking Dispenser State Machine ───────────────────────────────────
-enum DispenseState { DISPENSE_IDLE, DISPENSE_INIT, DISPENSE_SETTLE, DISPENSE_BULK, DISPENSE_TRICKLE_OPEN, DISPENSE_TRICKLE_WAIT, DISPENSE_FINAL_SETTLE, DISPENSE_EVALUATE };
+#define PULSE_MS_PER_GRAM 20
+#define PULSE_MIN_MS 40
+#define PULSE_MAX_MS 600
+#define PULSE_SETTLE_MS 450
+#define DISPENSE_DONE_G 0.5
+
+enum DispenseState { DISPENSE_IDLE, DISPENSE_INIT, DISPENSE_SETTLE, DISPENSE_PULSE_OPEN, DISPENSE_PULSE_SETTLE, DISPENSE_FINAL_SETTLE, DISPENSE_EVALUATE };
 DispenseState dispState = DISPENSE_IDLE;
 
 float         dispStartingWeight = 0.0;
@@ -394,6 +400,7 @@ unsigned long dispJamTimer = 0;
 bool          dispIrBlocked = false;
 int           dispJamBlockedCount = 0;
 unsigned long lastDispenseTelemetry = 0;
+unsigned long currentPulseDuration = 0;
 
 void handleDispenser() {
     if (dispState == DISPENSE_IDLE) return;
@@ -428,50 +435,35 @@ void handleDispenser() {
 
         case DISPENSE_SETTLE:
             if (millis() - dispMotorSettleTime > 600) { // MOTOR_SETTLE_MS
-                dispState = DISPENSE_BULK;
+                currentPulseDuration = constrain(remaining * PULSE_MS_PER_GRAM, PULSE_MIN_MS, PULSE_MAX_MS);
+                dispState = DISPENSE_PULSE_OPEN;
+                dispTrickleTimer = millis();
                 openHopper();
+                Serial.printf("[Dispense] Pulse: %.1fg remaining, duration %lums\n", remaining, currentPulseDuration);
             }
             break;
 
-        case DISPENSE_BULK:
-            if (dispensed >= (float)targetWeight * 0.90f) { // TRICKLE_START_PCT
-                closeHopper();
-                Serial.printf("[Dispense] Phase 2 — trickle at %.1fg (%.0f%% of %dg target)\n",
-                              dispensed, 90.0, targetWeight);
-                dispState = DISPENSE_TRICKLE_WAIT;
-                dispTrickleTimer = millis();
-            } else if (millis() - dispMotorSettleTime > 1100 && remaining <= 0.0f) {
-                // Exit condition during bulk
-                Serial.printf("[Dispense] Target reached in bulk — dispensed %.1fg\n", dispensed);
-                dispState = DISPENSE_FINAL_SETTLE;
+        case DISPENSE_PULSE_OPEN:
+            if (millis() - dispTrickleTimer > currentPulseDuration) {
                 closeHopper();
                 dispTrickleTimer = millis();
+                dispState = DISPENSE_PULSE_SETTLE;
             }
             break;
 
-        case DISPENSE_TRICKLE_OPEN:
-            if (remaining <= 0.5f) { // IN_FLIGHT_TRICKLE_G
-                Serial.printf("[Dispense] Target reached in trickle — dispensed %.1fg\n", dispensed);
-                dispState = DISPENSE_FINAL_SETTLE;
-                closeHopper();
-                dispTrickleTimer = millis();
-            } else if (millis() - dispTrickleTimer > 40) { // TRICKLE_OPEN_MS
-                closeHopper();
-                dispState = DISPENSE_TRICKLE_WAIT;
-                dispTrickleTimer = millis();
-            }
-            break;
-
-        case DISPENSE_TRICKLE_WAIT:
-            if (remaining <= 0.5f) {
-                Serial.printf("[Dispense] Target reached in trickle wait — dispensed %.1fg\n", dispensed);
-                dispState = DISPENSE_FINAL_SETTLE;
-                closeHopper();
-                dispTrickleTimer = millis();
-            } else if (millis() - dispTrickleTimer > 350) { // TRICKLE_CLOSE_MS
-                openHopper();
-                dispState = DISPENSE_TRICKLE_OPEN;
-                dispTrickleTimer = millis();
+        case DISPENSE_PULSE_SETTLE:
+            if (millis() - dispTrickleTimer > PULSE_SETTLE_MS) {
+                if (remaining <= DISPENSE_DONE_G) {
+                    Serial.printf("[Dispense] Target reached — dispensed %.1fg\n", dispensed);
+                    dispState = DISPENSE_FINAL_SETTLE;
+                    dispTrickleTimer = millis();
+                } else {
+                    currentPulseDuration = constrain(remaining * PULSE_MS_PER_GRAM, PULSE_MIN_MS, PULSE_MAX_MS);
+                    dispTrickleTimer = millis();
+                    openHopper();
+                    dispState = DISPENSE_PULSE_OPEN;
+                    Serial.printf("[Dispense] Pulse: %.1fg remaining, duration %lums\n", remaining, currentPulseDuration);
+                }
             }
             break;
 
@@ -503,7 +495,7 @@ void handleDispenser() {
     // ── Jam detection (only when dispensing) ──
     static float dispJamLastWeight = 0;
 
-    if (dispState == DISPENSE_BULK || dispState == DISPENSE_TRICKLE_OPEN || dispState == DISPENSE_TRICKLE_WAIT) {
+    if (dispState == DISPENSE_PULSE_OPEN) {
         if (digitalRead(IR_PIN) == LOW) { // IR_JAM_STATE
             dispJamBlockedCount++;
             if (dispJamBlockedCount >= 5) {
@@ -530,7 +522,7 @@ void handleDispenser() {
                             Serial.println("[JAM] Blockage cleared. Resuming dispense.");
                             dispIrBlocked = false;
                             dispJamBlockedCount = 0;
-                            if (dispState == DISPENSE_BULK || dispState == DISPENSE_TRICKLE_OPEN) {
+                            if (dispState == DISPENSE_PULSE_OPEN) {
                                 openHopper();
                             }
                         }
@@ -551,7 +543,7 @@ void handleDispenser() {
     }
 
     static unsigned long lastDebugPrint = 0;
-    if ((dispState == DISPENSE_BULK || dispState == DISPENSE_TRICKLE_OPEN || dispState == DISPENSE_TRICKLE_WAIT) && millis() - lastDebugPrint >= 500) {
+    if ((dispState == DISPENSE_PULSE_OPEN || dispState == DISPENSE_PULSE_SETTLE) && millis() - lastDebugPrint >= 500) {
         lastDebugPrint = millis();
         float dispensed = currentBowlWeight - dispStartingWeight;
         Serial.printf("[Debug] Dispensing... dispensed: %.1fg (currentBowlWeight: %.1fg, target: %dg)\n", dispensed, currentBowlWeight, targetWeight);
@@ -1111,7 +1103,12 @@ void loop() {
     static float samples[3] = {0,0,0};
     static int sIdx = 0;
 
+    // Disabling interrupts during the read prevents ESP32 WiFi interrupts 
+    // from stretching the SCK clock pulses and corrupting the HX711 24-bit reading.
+    static portMUX_TYPE hx711_mux = portMUX_INITIALIZER_UNLOCKED;
+    portENTER_CRITICAL(&hx711_mux);
     float newVal = scale.get_units(1);
+    portEXIT_CRITICAL(&hx711_mux);
 
     if (g_tareJustFired) {
       for (int i = 0; i < 3; i++) samples[i] = newVal;
