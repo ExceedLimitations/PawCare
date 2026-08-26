@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { CheckCircle, Loader2, Activity, BarChart3, Clock, CalendarDays, History, Settings2, Lock, User, Bell, Cpu, Wifi, Eye, Scale } from 'lucide-react';
+import { CheckCircle, Loader2, Activity, BarChart3, Clock, CalendarDays, History, Settings2, Lock, User, Bell, BellOff, Cpu, Wifi, Eye, Scale } from 'lucide-react';
 import { useSocket } from './hooks/useSocket';
+import { useNotifications } from './hooks/useNotifications';
 import petAvatar from './assets/pet_avatar.png';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
@@ -333,6 +334,14 @@ export default function App() {
   // Memoize token so useSocket only reconnects when the stored value actually changes,
   // not on every unrelated re-render of App.
   const token = useMemo(() => localStorage.getItem('pawcare_auth'), [isAuthenticated]);
+
+  // Native OS notification support (service worker backed)
+  const { permission: notifPermission, requestPermission, notify } = useNotifications();
+  // Keep a ref so addAlert (defined below) can always call the latest notify
+  // without needing it in its dependency array (avoids infinite loops).
+  const notifyRef = useRef(notify);
+  useEffect(() => { notifyRef.current = notify; }, [notify]);
+
   const [profile, setProfile] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editProfile, setEditProfile] = useState({ name: '', breed: '' });
@@ -377,6 +386,8 @@ export default function App() {
     const record = { id, type, title, message, time };
     // Optimistic update — show immediately in UI
     setAlerts(p => [record, ...p]);
+    // Fire real OS notification (works in background via SW)
+    notifyRef.current?.(title, message, { tag: `pawcare-${type}` });
     // Persist to Firestore via server
     authFetch('/notifications', {
       method: 'POST',
@@ -437,25 +448,17 @@ export default function App() {
       setDeviceFwVersion(data.version); // 'up_to_date' means device is running this version
     }
 
-    // ── In-app + native notifications for terminal OTA states ──────────────────
+    // ── In-app notifications for terminal OTA states (native notify fires via addAlert) ──
     if (data.status === 'success') {
-      const title  = 'Firmware Updated Successfully';
-      const body   = `Device updated to v${data.version || 'new version'} and is rebooting.`;
+      const title = 'Firmware Updated Successfully';
+      const body  = `Device updated to v${data.version || 'new version'} and is rebooting.`;
       addAlert('info', title, body);
-      if ('Notification' in window && Notification.permission === 'granted') {
-        try { new Notification(title, { body, icon: '/favicon.ico' }); }
-        catch (e) { console.warn('[Notification] Native push failed:', e); }
-      }
     }
 
     if (data.status === 'failed') {
-      const title  = 'Firmware Update Failed';
-      const body   = data.error ? `OTA error: ${data.error}` : 'The device could not apply the firmware update.';
+      const title = 'Firmware Update Failed';
+      const body  = data.error ? `OTA error: ${data.error}` : 'The device could not apply the firmware update.';
       addAlert('error', title, body);
-      if ('Notification' in window && Notification.permission === 'granted') {
-        try { new Notification(title, { body, icon: '/favicon.ico' }); }
-        catch (e) { console.warn('[Notification] Native push failed:', e); }
-      }
     }
 
     // Auto-clear non-active statuses after 10 s so the banner doesn't linger forever
@@ -484,17 +487,11 @@ export default function App() {
       addLog('ok', `${typeLabel} dispense — ${d.portion_g}g dispensed at ${t}`);
       setRecentFeedings(p => [d, ...p].slice(0, 50));
 
-      // Add in-app notification — use hopper food_level from statusRef (avoids stale closure)
+      // Add in-app notification — native OS notify fires automatically inside addAlert
       const foodLevel = statusRef.current.food_level ?? 0;
       const notifTitle = 'Food Dispensed';
       const notifBody = `${typeLabel} — ${d.portion_g}g dispensed. Food level is at ${foodLevel}%.`;
       addAlert('info', notifTitle, notifBody);
-
-      // Native browser/OS desktop notification (works when tab is in background)
-      if ('Notification' in window && Notification.permission === 'granted') {
-        try { new Notification(notifTitle, { body: notifBody, icon: '/favicon.ico' }); }
-        catch (e) { console.warn('[Notification] Native push failed:', e); }
-      }
 
       // Live-update the chart if it is currently showing the Week or Month period.
       // We update chartFeedings directly so the chart stays in sync with live feeds
@@ -600,11 +597,6 @@ export default function App() {
       }
     };
     init();
-
-    // Request permission for native browser notifications (once, non-blocking)
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
 
   }, [handleStatusUpdate, isAuthenticated, authFetch]);
 
@@ -934,6 +926,43 @@ export default function App() {
               </span>
             </>
           )}
+          <span className="nav-divider">|</span>
+
+          {/* Notification permission bell */}
+          {notifPermission !== 'unsupported' && (
+            <button
+              id="notif-bell-btn"
+              onClick={notifPermission !== 'granted' ? requestPermission : undefined}
+              title={
+                notifPermission === 'granted'
+                  ? 'System notifications enabled'
+                  : notifPermission === 'denied'
+                  ? 'Notifications blocked — enable in browser settings'
+                  : 'Enable system notifications'
+              }
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: notifPermission === 'denied' ? 'not-allowed' : 'pointer',
+                color:
+                  notifPermission === 'granted'
+                    ? 'var(--status-ok)'
+                    : notifPermission === 'denied'
+                    ? 'var(--status-error)'
+                    : 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                padding: '4px',
+                borderRadius: '6px',
+                transition: 'color 0.2s',
+              }}
+            >
+              {notifPermission === 'denied'
+                ? <BellOff size={17} />
+                : <Bell size={17} />}
+            </button>
+          )}
+
           <span className="nav-divider">|</span>
           <button
             onClick={handleLogout}

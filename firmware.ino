@@ -1163,22 +1163,30 @@ void loop() {
   }
 
   // ── Non-blocking Jam Buzzer ─────────────────────────────────────────────────
+  // Produces a continuous beep-beep-beep while the system is jammed.
+  // Uses its own static timer so it doesn't interfere with startBeeps() / handleBuzzer().
+  static unsigned long jamBuzzLastToggle = 0;
+  static bool          jamBuzzOn         = false;
+
   if (systemJammed) {
-    /*
-    static unsigned long lastBuzzTime = 0;
-    static bool buzzerState = false;
-    if (millis() - lastBuzzTime > 300) {
-      lastBuzzTime = millis();
-      buzzerState = !buzzerState;
-      if (buzzerState) {
-        ledcWriteTone(BUZZER_PIN, 2000);
-      } else {
-        ledcWriteTone(BUZZER_PIN, 0);
+    if (millis() - jamBuzzLastToggle >= 300) {
+      jamBuzzLastToggle = millis();
+      jamBuzzOn = !jamBuzzOn;
+      // Only drive the buzzer if the general-purpose beeper is idle,
+      // so start-up chimes and confirmation beeps aren't interrupted.
+      if (buzzerRemainingBeeps == 0) {
+        ledcWriteTone(BUZZER_PIN, jamBuzzOn ? 2500 : 0);
       }
     }
-    */
+  } else {
+    // Jam cleared — silence immediately (if we were the one driving it)
+    if (jamBuzzOn && buzzerRemainingBeeps == 0) {
+      ledcWriteTone(BUZZER_PIN, 0);
+    }
+    jamBuzzOn = false;
+    jamBuzzLastToggle = 0;
   }
-  handleBuzzer(); // Handle general async beeps
+  handleBuzzer(); // Handle general async beeps (startup chime, tare confirm, etc.)
 
 
   // ── Periodic telemetry push (every 4 s) ───────────────────────────────────
