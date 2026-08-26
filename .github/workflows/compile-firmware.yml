@@ -1,11 +1,12 @@
 name: Compile & Deploy Firmware
 
-# Triggers whenever firmware.ino changes on the main branch
+# Triggers whenever firmware.ino changes on the main branch, or manually
 on:
   push:
     branches: [main]
     paths:
       - 'firmware.ino'
+  workflow_dispatch:
 
 jobs:
   compile:
