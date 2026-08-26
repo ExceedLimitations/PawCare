@@ -877,7 +877,8 @@ export default function App() {
             );
           })() : (() => {
             // Show "Update Available" if device is connected and running an older version
-            const hasUpdate = connected && deviceConnected && deviceFwVersion && latestFwVersion && deviceFwVersion !== latestFwVersion;
+            const normalise = v => (v || '').replace(/^v/i, '').trim();
+            const hasUpdate = connected && deviceConnected && deviceFwVersion && latestFwVersion && normalise(deviceFwVersion) !== normalise(latestFwVersion);
             if (hasUpdate) {
               return (
                 <div className="status-badge ota-downloading" style={{ cursor: 'default' }}>
@@ -913,7 +914,7 @@ export default function App() {
                 className="font-mono"
                 style={{
                   fontSize: '0.78rem',
-                  color: deviceFwVersion && latestFwVersion && deviceFwVersion !== latestFwVersion
+                  color: deviceFwVersion && latestFwVersion && (v => (v || '').replace(/^v/i, '').trim())(deviceFwVersion) !== (v => (v || '').replace(/^v/i, '').trim())(latestFwVersion)
                     ? 'var(--status-warning)'
                     : 'var(--text-muted)',
                 }}
@@ -922,7 +923,7 @@ export default function App() {
                   : `Latest available: v${latestFwVersion}`}
               >
                 {deviceFwVersion ? `FW v${deviceFwVersion}` : `FW v${latestFwVersion}`}
-                {deviceFwVersion && latestFwVersion && deviceFwVersion !== latestFwVersion && ' ⚠'}
+                {deviceFwVersion && latestFwVersion && (v => (v || '').replace(/^v/i, '').trim())(deviceFwVersion) !== (v => (v || '').replace(/^v/i, '').trim())(latestFwVersion) && ' ⚠'}
               </span>
             </>
           )}
