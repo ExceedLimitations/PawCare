@@ -1,3 +1,4 @@
+// PawCare ESP32 Firmware — compiled & deployed via GitHub Actions (compile-firmware.yml)
 #include <WiFi.h>
 #include <WiFiManager.h>          // tzapu/WiFiManager  — install via Library Manager
 #include <PubSubClient.h>
