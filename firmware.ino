@@ -92,7 +92,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.10"
+#define FIRMWARE_VERSION  "1.3.11"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA)
