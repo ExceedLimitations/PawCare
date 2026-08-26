@@ -35,11 +35,12 @@ const char* mqtt_client_id = "PawCareClient-device01";
 //  PIN ASSIGNMENTS
 // =============================================================================
 #define SERVO_PIN         13
+#define SERVO_CHANNEL      1   // LEDC channel for servo PWM (2.x API)
 #define TRIG_PIN           5
 #define ECHO_PIN          18
 #define IR_PIN            19
 #define BUZZER_PIN         4
-#define BUZZER_CHANNEL     0
+#define BUZZER_CHANNEL     0   // LEDC channel for buzzer PWM (2.x API)
 #define STATUS_LED_PIN     2
 #define ALERT_LED_PIN     15
 #define BUTTON_PIN        14   // manual dispense button  /  hold on boot = WiFi reset
@@ -74,18 +75,14 @@ void handleBuzzer() {
             buzzerNextToggle = millis() + buzzerCurrentDuration;
             buzzerIsOn = !buzzerIsOn;
             if (buzzerIsOn) {
-                // ESP32 core 3.x removed ledcWriteTone(); use the pin-based API instead:
-                // ledcAttach(BUZZER_PIN, 2000, 8) was called in setup(), so just
-                // change frequency and set 50% duty cycle to produce a tone.
-                ledcChangeFrequency(BUZZER_PIN, 2000, 8);
-                ledcWrite(BUZZER_PIN, 128); // 50% duty = audible tone
+                ledcWriteTone(BUZZER_CHANNEL, 2000); // 2 kHz tone on
             } else {
-                ledcWrite(BUZZER_PIN, 0);   // 0% duty = silence
+                ledcWriteTone(BUZZER_CHANNEL, 0);    // silence
             }
             buzzerRemainingBeeps--;
             if (buzzerRemainingBeeps == 0) {
                 buzzerIsOn = false;
-                ledcWrite(BUZZER_PIN, 0);
+                ledcWriteTone(BUZZER_CHANNEL, 0);
             }
         }
     }
@@ -283,7 +280,7 @@ void setServoAngle(int angle) {
   if (angle > 180) angle = 180;
   // map 0-180 to 410-1966 for 14-bit 50Hz PWM
   int duty = map(angle, 0, 180, 410, 1966);
-  ledcWrite(SERVO_PIN, duty);
+  ledcWrite(SERVO_CHANNEL, duty); // 2.x API: write to channel, not pin
 }
 
 void openHopper() {
@@ -764,7 +761,9 @@ void setup() {
 
   pinMode(IR_PIN,         INPUT_PULLUP);
   pinMode(BUTTON_PIN,     INPUT_PULLUP);
-  ledcAttach(BUZZER_PIN, 2000, 8);
+  // 2.x LEDC API: ledcSetup(channel, freq, resolution) + ledcAttachPin(pin, channel)
+  ledcSetup(BUZZER_CHANNEL, 2000, 8);
+  ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
   pinMode(STATUS_LED_PIN, OUTPUT);
   pinMode(ALERT_LED_PIN,  OUTPUT);
   pinMode(TRIG_PIN,       OUTPUT);
@@ -804,7 +803,8 @@ void setup() {
   client.setKeepAlive(60);      // seconds — keeps connection alive
 
   // ── Servo ──────────────────────────────────────────────────────────────────
-  ledcAttach(SERVO_PIN, 50, 14);
+  ledcSetup(SERVO_CHANNEL, 50, 14);
+  ledcAttachPin(SERVO_PIN, SERVO_CHANNEL);
   closeHopper(); // Start at CLOSED (90°) — the idle/default position
   // NOTE: If the servo still twitches at the very moment of power-on, that is a
   // hardware bootloader issue. Add a 10 kΩ pull-down resistor on the signal wire
@@ -926,11 +926,12 @@ void loop() {
     Serial.println("[TARE] Scale tared OK.");
 
     // Triple beep + LED flash as confirmation
+    // BUZZER_PIN is LEDC-managed — use ledcWriteTone(), not digitalWrite()
     for (int i = 0; i < 3; i++) {
-      digitalWrite(BUZZER_PIN,     HIGH);
+      ledcWriteTone(BUZZER_CHANNEL, 2000);
       digitalWrite(STATUS_LED_PIN, LOW);
       delay(100);
-      digitalWrite(BUZZER_PIN,     LOW);
+      ledcWriteTone(BUZZER_CHANNEL, 0);
       digitalWrite(STATUS_LED_PIN, HIGH);
       delay(100);
     }
@@ -1175,13 +1176,13 @@ void loop() {
       // Only drive the buzzer if the general-purpose beeper is idle,
       // so start-up chimes and confirmation beeps aren't interrupted.
       if (buzzerRemainingBeeps == 0) {
-        ledcWriteTone(BUZZER_PIN, jamBuzzOn ? 2500 : 0);
+        ledcWriteTone(BUZZER_CHANNEL, jamBuzzOn ? 2500 : 0);
       }
     }
   } else {
     // Jam cleared — silence immediately (if we were the one driving it)
     if (jamBuzzOn && buzzerRemainingBeeps == 0) {
-      ledcWriteTone(BUZZER_PIN, 0);
+      ledcWriteTone(BUZZER_CHANNEL, 0);
     }
     jamBuzzOn = false;
     jamBuzzLastToggle = 0;
