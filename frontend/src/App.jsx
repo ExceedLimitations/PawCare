@@ -368,6 +368,12 @@ export default function App() {
   const deviceTimeoutRef = useRef(null);
   const dispenseTimeoutRef = useRef(null);
   const statusRef = useRef({ food_level: 0, jammed: false, last_dispensed_g: 0, bowl_weight: 0, dispense_success: null });
+  // Tracks feeding IDs we have already notified about so the catch-up
+  // fetch on reconnect never fires a duplicate notification.
+  const seenFeedingIds = useRef(new Set());
+  // Becomes true once the initial /feedings/recent fetch has seeded seenFeedingIds.
+  // The onConnect catch-up is skipped until then to avoid racing with the first load.
+  const initSeeded = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -424,8 +430,6 @@ export default function App() {
     if (newStatus.fw_version) setDeviceFwVersion(newStatus.fw_version);
 
     setStatus(prev => {
-      const oldWeight = prev.bowl_weight ?? prev.last_dispensed_g ?? 0;
-      const currentWeight = newStatus.bowl_weight ?? newStatus.last_dispensed_g ?? 0;
       const next = { ...prev, ...newStatus };
       statusRef.current = next;
       return next;
@@ -486,6 +490,8 @@ export default function App() {
         : d.type === 'physical' ? 'Physical Button' : 'Manual';
       addLog('ok', `${typeLabel} dispense — ${d.portion_g}g dispensed at ${t}`);
       setRecentFeedings(p => [d, ...p].slice(0, 50));
+      // Mark this feeding as seen so the reconnect catch-up doesn't re-notify.
+      if (d.id) seenFeedingIds.current.add(d.id);
 
       // Add in-app notification — native OS notify fires automatically inside addAlert
       const foodLevel = statusRef.current.food_level ?? 0;
@@ -524,6 +530,36 @@ export default function App() {
       addAlert(d.level === 'error' ? 'error' : 'warning', d.level === 'error' ? 'Fault Detected' : 'System Notice', d.message);
     },
     onOtaStatus: handleOtaStatus,
+    // On every socket (re)connect, fetch the last 50 feedings and fire a
+    // notification for any scheduled/physical/manual feed that happened in
+    // the last 5 minutes but whose feeding_done event we never received
+    // (e.g. because the socket was briefly down when the server emitted it).
+    onConnect: async () => {
+      // Skip the catch-up until the initial page-load fetch has seeded seenFeedingIds.
+      // Without this guard, the very first socket connect (which races with init())
+      // would run with an empty set and generate duplicate notifications for all
+      // feedings in the last 5 minutes that are also in the initial load.
+      if (!initSeeded.current) return;
+      try {
+        const res = await authFetch('/feedings/recent');
+        if (!res.ok) return;
+        const rows = await res.json();
+        const cutoff = Date.now() - 5 * 60 * 1000; // 5-minute window
+        for (const f of rows) {
+          if (seenFeedingIds.current.has(f.id)) continue;
+          const feedTs = new Date(f.timestamp).getTime();
+          if (feedTs < cutoff) continue; // older than 5 min — skip
+          seenFeedingIds.current.add(f.id);
+          const typeLabel = f.type === 'scheduled'
+            ? (f.label ? `Scheduled (${f.label})` : 'Scheduled')
+            : f.type === 'physical' ? 'Physical Button' : 'Manual';
+          const t = new Date(f.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
+          addAlert('info', 'Food Dispensed', `${typeLabel} — ${f.portion_g}g dispensed at ${t}.`);
+        }
+      } catch (err) {
+        console.warn('[PawCare] Reconnect catch-up failed:', err);
+      }
+    },
     token,
   });
 
@@ -567,6 +603,10 @@ export default function App() {
         if (sched.status === 'fulfilled' && Array.isArray(sched.value)) setSchedules(sched.value);
         if (recent.status === 'fulfilled' && Array.isArray(recent.value)) {
           setRecentFeedings(recent.value);
+          // Pre-seed seenFeedingIds so the reconnect catch-up never re-notifies
+          // feedings that were already loaded when the page first opened.
+          recent.value.forEach(f => { if (f.id) seenFeedingIds.current.add(f.id); });
+          initSeeded.current = true;
           if (recent.value.length > 0) {
             const last = recent.value[0];
             const t = new Date(last.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });

@@ -3,17 +3,18 @@ import { io } from 'socket.io-client';
 
 const IS_DEV = import.meta.env.DEV;
 
-export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, onOtaStatus, token }) {
+export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, onOtaStatus, onConnect, token }) {
   const socketRef = useRef(null);
   const [connected, setConnected] = useState(false);
 
   // Store all callbacks in refs so socket listeners always call the latest version
   // without needing to re-register (which would disconnect and reconnect the socket).
-  const onStatusRef       = useRef(onStatus);
-  const onFeedingDoneRef  = useRef(onFeedingDone);
-  const onAlertRef        = useRef(onAlert);
+  const onStatusRef        = useRef(onStatus);
+  const onFeedingDoneRef   = useRef(onFeedingDone);
+  const onAlertRef         = useRef(onAlert);
   const onFeedingsTodayRef = useRef(onFeedingsToday);
-  const onOtaStatusRef    = useRef(onOtaStatus);
+  const onOtaStatusRef     = useRef(onOtaStatus);
+  const onConnectRef       = useRef(onConnect);
 
   // Keep refs in sync with latest props every render
   onStatusRef.current        = onStatus;
@@ -21,6 +22,7 @@ export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, o
   onAlertRef.current         = onAlert;
   onFeedingsTodayRef.current = onFeedingsToday;
   onOtaStatusRef.current     = onOtaStatus;
+  onConnectRef.current       = onConnect;
 
   useEffect(() => {
     if (!token) {
@@ -35,7 +37,7 @@ export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, o
     });
     socketRef.current = socket;
 
-    socket.on('connect',       () => setConnected(true));
+    socket.on('connect',       () => { setConnected(true); onConnectRef.current?.(); });
     socket.on('disconnect',    () => setConnected(false));
     socket.on('connect_error', () => setConnected(false));
 

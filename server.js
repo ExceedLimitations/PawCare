@@ -772,8 +772,6 @@ setInterval(async () => {
     if (s.days === "weekdays" && isWeekend) continue;
     if (s.days === "weekends" && !isWeekend) continue;
 
-    firedThisMinute.add(s.id);
-
     // Use the same 25 s freshness window as the heartbeat emitter so a feed
     // is never skipped due to normal MQTT relay latency.
     const isDeviceOnline = lastSeenDevice > 0 && (Date.now() - lastSeenDevice < 25000);
@@ -782,11 +780,11 @@ setInterval(async () => {
       continue;
     }
 
-    mqttClient.publish(
-      TOPIC_CMD,
-      JSON.stringify({ action: "feed", portion_g: s.portion_g }),
-      { qos: 1 },
-    );
+    // Only mark as fired after we confirm the device is online.
+    // Moving this below the online-check means the schedule can still fire
+    // in the same minute window if the device reconnects before the next tick.
+    firedThisMinute.add(s.id);
+
     const record = {
       id: crypto.randomUUID(),
       timestamp: now.toISOString(),
@@ -794,13 +792,30 @@ setInterval(async () => {
       type: "scheduled",
       label: s.label,
     };
-    try {
-      await firestoreDb.collection("feedings").doc(record.id).set(record);
-      io.emit("feeding_done", record);
-      console.log(`[Schedule] "${s.label}" fired at ${hhmm} (${LOCAL_TZ}) — ${s.portion_g}g`);
-    } catch (err) {
-      console.error("[Firebase] Error saving scheduled feed:", err.message);
-    }
+
+    // Only write to Firestore and notify clients after the MQTT command is
+    // confirmed delivered. If the broker is down, we skip the record entirely
+    // rather than creating a ghost feeding with no actual food dispensed.
+    mqttClient.publish(
+      TOPIC_CMD,
+      JSON.stringify({ action: "feed", portion_g: s.portion_g }),
+      { qos: 1 },
+      async (err) => {
+        if (err) {
+          console.error(`[Schedule] "${s.label}" MQTT publish failed:`, err.message);
+          // Un-mark so it can retry on the next 30 s tick within the same minute.
+          firedThisMinute.delete(s.id);
+          return;
+        }
+        try {
+          await firestoreDb.collection("feedings").doc(record.id).set(record);
+          io.emit("feeding_done", record);
+          console.log(`[Schedule] "${s.label}" fired at ${hhmm} (${LOCAL_TZ}) — ${s.portion_g}g`);
+        } catch (dbErr) {
+          console.error("[Firebase] Error saving scheduled feed:", dbErr.message);
+        }
+      }
+    );
   }
 }, 30_000); // Check every 30 s so we never miss a 1-minute window
 
