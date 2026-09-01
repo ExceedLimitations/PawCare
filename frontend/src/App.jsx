@@ -458,7 +458,7 @@ export default function App() {
     if (data.status === 'success') {
       const title = 'Firmware Updated Successfully';
       const body  = `Device updated to v${data.version || 'new version'} and is rebooting.`;
-      addAlert('info', title, body);
+      addAlert('success', title, body);
     }
 
     if (data.status === 'failed') {
