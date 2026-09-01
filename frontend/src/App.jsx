@@ -582,9 +582,13 @@ export default function App() {
     return 'empty';
   };
 
+  // statusReady gates the reservoir effect — stays false until the first
+  // real /status fetch completes so the default food_level:0 initial state
+  // never triggers a spurious notification on mount.
+  const statusReady = useRef(false);
   const prevFoodState = useRef(null);
   useEffect(() => {
-    if (status.food_level == null) return;
+    if (!statusReady.current || status.food_level == null) return;
     const currentState = getReservoirState(status.food_level);
     if (currentState === prevFoodState.current) return; // no change — skip
 
@@ -628,14 +632,17 @@ export default function App() {
           authFetch('/notifications').then(r => r.json()),
         ]);
         if (s.status === 'fulfilled' && s.value && !s.value.error) {
-          handleStatusUpdate(s.value, false);
-          // Seed the reservoir state ref so the first live socket update
-          // never fires a spurious notification on page load / reconnect.
+          // Seed prevFoodState and mark statusReady BEFORE calling handleStatusUpdate.
+          // handleStatusUpdate calls setStatus which schedules a re-render — by the time
+          // the reservoir useEffect fires for that render, the refs are already set so
+          // no spurious notification is generated.
           if (s.value.food_level != null) {
             const lvl = s.value.food_level;
             prevFoodState.current =
               lvl >= 75 ? 'full' : lvl >= 40 ? 'sufficient' : lvl > 0 ? 'low' : 'empty';
           }
+          statusReady.current = true;
+          handleStatusUpdate(s.value, false);
         }
         if (today.status === 'fulfilled' && today.value && !today.value.error) setFeedingsToday(today.value.count || 0);
         if (sched.status === 'fulfilled' && Array.isArray(sched.value)) setSchedules(sched.value);
