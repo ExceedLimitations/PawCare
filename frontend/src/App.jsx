@@ -572,13 +572,42 @@ export default function App() {
     prevJammed.current = status.jammed;
   }, [status.jammed, addAlert, addLog]);
 
-  const prevLowFood = useRef(false);
+  // Returns one of 'full' | 'sufficient' | 'low' | 'empty' based on current level
+  const getReservoirState = (level) => {
+    if (level >= 75) return 'full';
+    if (level >= 40) return 'sufficient';
+    if (level > 0)   return 'low';
+    return 'empty';
+  };
+
+  const prevFoodState = useRef(null);
   useEffect(() => {
-    if (status.food_level > 0 && status.food_level < 20 && !prevLowFood.current) {
-      addAlert('warning', 'Low Food Level', `Food reservoir is at ${status.food_level}%. Please refill.`);
-      addLog('warn', `Low food level detected: ${status.food_level}%`);
+    if (status.food_level == null) return;
+    const currentState = getReservoirState(status.food_level);
+    if (currentState === prevFoodState.current) return; // no change — skip
+
+    switch (currentState) {
+      case 'full':
+        addAlert('success', 'Reservoir Full', `Food reservoir is FULL at ${status.food_level}%. You're all set!`);
+        addLog('info', `Reservoir state → FULL (${status.food_level}%)`);
+        break;
+      case 'sufficient':
+        addAlert('info', 'Reservoir Sufficient', `Food reservoir is SUFFICIENT at ${status.food_level}%. Plenty of food remaining.`);
+        addLog('info', `Reservoir state → SUFFICIENT (${status.food_level}%)`);
+        break;
+      case 'low':
+        addAlert('warning', 'Reservoir Low', `Food reservoir is LOW at ${status.food_level}%. Please refill soon.`);
+        addLog('warn', `Reservoir state → LOW (${status.food_level}%)`);
+        break;
+      case 'empty':
+        addAlert('error', 'Reservoir Empty', `Food reservoir is EMPTY at ${status.food_level}%. Refill immediately!`);
+        addLog('err', `Reservoir state → EMPTY (${status.food_level}%)`);
+        break;
+      default:
+        break;
     }
-    prevLowFood.current = status.food_level > 0 && status.food_level < 20;
+
+    prevFoodState.current = currentState;
   }, [status.food_level, addAlert, addLog]);
 
   useEffect(() => {
@@ -1350,7 +1379,7 @@ export default function App() {
                 alerts.map((a) => (
                   <div key={a.id} style={{ display: 'flex', flexDirection: 'column', padding: '12px', borderBottom: '1px solid var(--border)', gap: '4px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: a.type === 'error' ? 'var(--status-error)' : a.type === 'info' ? 'var(--status-ok)' : 'var(--status-warning)' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: a.type === 'error' ? 'var(--status-error)' : a.type === 'success' ? 'var(--status-ok)' : a.type === 'info' ? 'var(--accent)' : 'var(--status-warning)' }}>
                         {a.title}
                       </span>
                       <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{a.time}</span>
