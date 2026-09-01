@@ -499,7 +499,7 @@ export default function App() {
       const foodLevel = statusRef.current.food_level ?? 0;
       const notifTitle = 'Food Dispensed';
       const notifBody = `${typeLabel} — ${d.portion_g}g dispensed. Food level is at ${foodLevel}%.`;
-      addAlert('info', notifTitle, notifBody);
+      addAlert('success', notifTitle, notifBody);
 
       // Live-update the chart if it is currently showing the Week or Month period.
       // We update chartFeedings directly so the chart stays in sync with live feeds
@@ -556,7 +556,7 @@ export default function App() {
             ? (f.label ? `Scheduled (${f.label})` : 'Scheduled')
             : f.type === 'physical' ? 'Physical Button' : 'Manual';
           const t = new Date(f.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
-          addAlert('info', 'Food Dispensed', `${typeLabel} — ${f.portion_g}g dispensed at ${t}.`);
+          addAlert('success', 'Food Dispensed', `${typeLabel} — ${f.portion_g}g dispensed at ${t}.`);
         }
       } catch (err) {
         console.warn('[PawCare] Reconnect catch-up failed:', err);
