@@ -629,6 +629,13 @@ export default function App() {
         ]);
         if (s.status === 'fulfilled' && s.value && !s.value.error) {
           handleStatusUpdate(s.value, false);
+          // Seed the reservoir state ref so the first live socket update
+          // never fires a spurious notification on page load / reconnect.
+          if (s.value.food_level != null) {
+            const lvl = s.value.food_level;
+            prevFoodState.current =
+              lvl >= 75 ? 'full' : lvl >= 40 ? 'sufficient' : lvl > 0 ? 'low' : 'empty';
+          }
         }
         if (today.status === 'fulfilled' && today.value && !today.value.error) setFeedingsToday(today.value.count || 0);
         if (sched.status === 'fulfilled' && Array.isArray(sched.value)) setSchedules(sched.value);
@@ -1385,7 +1392,10 @@ export default function App() {
                         {a.title}
                       </span>
                       <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        {a.date ? `${a.date} · ` : ''}{a.time}
+                        {(() => {
+                          const d = a.date || (a.id ? new Date(parseInt(a.id.slice(0, 13))).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' }) : '');
+                          return d ? `${d} · ` : '';
+                        })()}{a.time}
                       </span>
                     </div>
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>{a.message}</span>
