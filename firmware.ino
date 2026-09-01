@@ -94,7 +94,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.13"
+#define FIRMWARE_VERSION  "1.3.14"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA) — expires 2035-06-04
@@ -486,6 +486,7 @@ void handleDispenser() {
                 Serial.printf("[Dispense] Incomplete: %.1fg dispensed. Jam or timeout.\n", lastDispensedWeight);
             }
             
+            ledcWrite(SERVO_CHANNEL, 0); // De-energize servo — prevents heating/jitter between dispenses
             sendTelemetry(lastValidLevel);
             dispState = DISPENSE_IDLE;
             break;
@@ -812,6 +813,7 @@ void setup() {
   // hardware bootloader issue. Add a 10 kΩ pull-down resistor on the signal wire
   // to hold the pin LOW before the ESP32 firmware takes control.
   delay(500);          // Give servo time to reach center
+  ledcWrite(SERVO_CHANNEL, 0); // Cut PWM signal — prevents servo from staying energized at idle
 
   // ── Load Cell ──────────────────────────────────────────────────────────────
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
@@ -965,7 +967,7 @@ void loop() {
   // ── Ultrasonic hopper level ─────────────────────────────────────────────────
   // Calibration constants are defined at the top of the file as:
   //   #define HOPPER_FULL_CM  2   (adjust if needed)
-  //   #define HOPPER_EMPTY_CM 20  (measure your hopper depth and update)
+  //   #define HOPPER_EMPTY_CM 9   (measure your hopper depth and update; recalibrated from 11→9 cm)
 
   // Skip while actively dispensing — getDistance() blocks up to ~110ms per call,
   // which was starving the dispense state machine of frequent weight checks
@@ -980,7 +982,11 @@ void loop() {
   static int  fullConfirmCount   = 0;  // consecutive timeouts leaning toward full
   static const int CONFIRM_NEEDED = 5; // raised from 3 — needs 5 consecutive timeouts before committing
 
-  if (dispState == DISPENSE_IDLE) {
+  // Rate-limit ultrasonic reads to every 500 ms — getDistance() blocks ~30 ms
+  // (3 pings × 10 ms each) which is too long to run every loop iteration.
+  static unsigned long lastUltrasonicRead = 0;
+  if (dispState == DISPENSE_IDLE && millis() - lastUltrasonicRead >= 500) {
+    lastUltrasonicRead = millis();
     int dist = getDistance(); // median of 3 pings
 
     if (dist == 0) {
