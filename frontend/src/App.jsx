@@ -390,7 +390,7 @@ export default function App() {
     const id = Date.now().toString() + Math.random().toString(36).substr(2, 5);
     const now = new Date();
     const time = now.toLocaleTimeString([], { timeZone: 'Asia/Manila', hour12: false });
-    const date = now.toLocaleDateString([], { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' });
+    const date = now.toLocaleDateString([], { timeZone: 'Asia/Manila', month: 'numeric', day: 'numeric', year: 'numeric' });
     const record = { id, type, title, message, time, date };
     // Optimistic update — show immediately in UI
     setAlerts(p => [record, ...p]);
@@ -1416,7 +1416,7 @@ export default function App() {
               ) : (
                 recentFeedings.map((f, i) => {
                   const feedDate = new Date(f.timestamp);
-                  const localDate = feedDate.toLocaleDateString([], { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' });
+                  const localDate = feedDate.toLocaleDateString([], { timeZone: 'Asia/Manila', month: 'numeric', day: 'numeric', year: 'numeric' });
                   const localTime = feedDate.toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
                   return (
                     <div key={f.id || i} className="history-row-compact">
