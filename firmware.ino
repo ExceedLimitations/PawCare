@@ -137,11 +137,13 @@ const int   jamTimeout       = 1500;  // ms IR blocked before jam is declared
 //                   Food touching the mesh causes timeouts (dist==0), handled separately.
 //                   Set this to the first stable non-zero reading you see when full (~2-4 cm).
 // HOPPER_EMPTY_CM = distance (cm) from sensor to hopper bottom when COMPLETELY EMPTY.
-//                   Measured value: sensor reads ~11 cm when hopper is fully empty.
-//                   (Old value was 20 cm, which caused 50% to show when actually empty.)
-//                   To re-calibrate: empty the hopper, open the lid, read from Serial Monitor.
+//                   Recalibrated from 11 → 9 cm:
+//                   When physically empty, sensor reads ~9 cm, which mapped to 23% with
+//                   HOPPER_EMPTY_CM=11. Back-calc: 23 = 100-(dist-2)*100/(11-2) → dist≈9 cm.
+//                   constrain() clamps any reading ≥9 cm to 0%.
+//                   To re-calibrate: empty the hopper, open the lid, read cm from Serial Monitor.
 #define HOPPER_FULL_CM   2    // cm — 100% level
-#define HOPPER_EMPTY_CM  11   // cm — 0% level  ← corrected from 20 to match actual hopper depth
+#define HOPPER_EMPTY_CM  9    // cm — 0% level  ← recalibrated: sensor reads ~9 cm when empty
 
 bool  systemJammed           = false;
 float lastDispensedWeight    = 0.0;
