@@ -331,7 +331,7 @@ input:checked + .toggle-track::before { transform: translateX(19px); }
 
 .history-row-compact {
   display: grid; 
-  grid-template-columns: 75px auto 1fr 24px; 
+  grid-template-columns: minmax(160px, max-content) auto 1fr 24px; 
   align-items: center; 
   gap: 8px;
   padding: 12px 0; 
@@ -430,5 +430,5 @@ input:checked + .toggle-track::before { transform: translateX(19px); }
 @media (max-width: 480px) {
   .visualizer-row { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: 1fr; }
-  .history-row-compact { grid-template-columns: 60px auto 1fr 20px; font-size: 0.8rem; }
+  .history-row-compact { grid-template-columns: minmax(140px, max-content) auto 1fr 20px; font-size: 0.78rem; }
 }
