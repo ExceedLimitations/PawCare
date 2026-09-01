@@ -388,8 +388,10 @@ export default function App() {
 
   const addAlert = useCallback((type, title, message) => {
     const id = Date.now().toString() + Math.random().toString(36).substr(2, 5);
-    const time = new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour12: false });
-    const record = { id, type, title, message, time };
+    const now = new Date();
+    const time = now.toLocaleTimeString([], { timeZone: 'Asia/Manila', hour12: false });
+    const date = now.toLocaleDateString([], { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' });
+    const record = { id, type, title, message, time, date };
     // Optimistic update — show immediately in UI
     setAlerts(p => [record, ...p]);
     // Fire real OS notification (works in background via SW)
@@ -1382,7 +1384,9 @@ export default function App() {
                       <span style={{ fontSize: '0.85rem', fontWeight: '600', color: a.type === 'error' ? 'var(--status-error)' : a.type === 'success' ? 'var(--status-ok)' : a.type === 'info' ? '#2563EB' : 'var(--status-warning)' }}>
                         {a.title}
                       </span>
-                      <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{a.time}</span>
+                      <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {a.date ? `${a.date} · ` : ''}{a.time}
+                      </span>
                     </div>
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>{a.message}</span>
                     <button onClick={() => dismissAlert(a.id)} style={{ alignSelf: 'flex-start', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', padding: '4px 0', marginTop: '4px', textDecoration: 'underline' }}>
@@ -1411,10 +1415,12 @@ export default function App() {
                 </div>
               ) : (
                 recentFeedings.map((f, i) => {
-                  const localTime = new Date(f.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
+                  const feedDate = new Date(f.timestamp);
+                  const localDate = feedDate.toLocaleDateString([], { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' });
+                  const localTime = feedDate.toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
                   return (
                     <div key={f.id || i} className="history-row-compact">
-                      <span className="history-timestamp font-mono">{localTime}</span>
+                      <span className="history-timestamp font-mono">{localDate} · {localTime}</span>
                       <div className="history-chip-wrapper">
                         <span className={`history-chip ${f.type || 'auto'}`}>
                           {(f.type || 'auto').toUpperCase()}
