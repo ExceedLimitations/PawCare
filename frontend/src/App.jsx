@@ -1379,7 +1379,7 @@ export default function App() {
                 alerts.map((a) => (
                   <div key={a.id} style={{ display: 'flex', flexDirection: 'column', padding: '12px', borderBottom: '1px solid var(--border)', gap: '4px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: a.type === 'error' ? 'var(--status-error)' : a.type === 'success' ? 'var(--status-ok)' : a.type === 'info' ? 'var(--accent)' : 'var(--status-warning)' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: a.type === 'error' ? 'var(--status-error)' : a.type === 'success' ? 'var(--status-ok)' : a.type === 'info' ? '#2563EB' : 'var(--status-warning)' }}>
                         {a.title}
                       </span>
                       <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{a.time}</span>
