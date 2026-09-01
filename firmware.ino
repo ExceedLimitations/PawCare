@@ -94,7 +94,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.14"
+#define FIRMWARE_VERSION  "1.3.15"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA) — expires 2035-06-04
@@ -424,6 +424,10 @@ void handleDispenser() {
             dispCurrentWeight = dispStartingWeight;
             
             startBeeps(2, 100);
+            // Re-attach servo pin to restart the LEDC timer — necessary because
+            // DISPENSE_EVALUATE cuts PWM with ledcWrite(SERVO_CHANNEL, 0), which
+            // halts the timer on ESP32 Core 2.x; subsequent writes silently fail.
+            ledcAttachPin(SERVO_PIN, SERVO_CHANNEL);
             closeHopper();
             
             dispStartTime = millis();
