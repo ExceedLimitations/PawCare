@@ -35,7 +35,14 @@ const char* mqtt_client_id = "PawCareClient-device01";
 //  PIN ASSIGNMENTS
 // =============================================================================
 #define SERVO_PIN         13
-#define SERVO_CHANNEL      1   // LEDC channel for servo PWM (2.x API)
+#define SERVO_CHANNEL      2   // LEDC channel for servo PWM (2.x API)
+                                // NOTE: on core 2.x, channels share a timer in pairs
+                                // (timer = (channel/2)%4). Channel 1 shares a timer with
+                                // BUZZER_CHANNEL (0) — ledcWriteTone() for beeps was
+                                // silently reprogramming that timer's frequency (2000Hz+)
+                                // out from under the servo's 50Hz signal, so every beep
+                                // during a dispense corrupted the servo PWM. Channel 2
+                                // uses a separate timer.
 #define TRIG_PIN           5
 #define ECHO_PIN          18
 #define IR_PIN            19
@@ -94,7 +101,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.15"
+#define FIRMWARE_VERSION  "1.3.16"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA) — expires 2035-06-04
@@ -619,6 +626,7 @@ void checkForOTAUpdate() {
   StaticJsonDocument<256> doc;
   if (deserializeJson(doc, payload) != DeserializationError::Ok) {
     Serial.println("[OTA] Bad version.json — skipping.");
+    publishOtaStatus("failed", "", "Malformed version.json");
     return;
   }
 
@@ -948,23 +956,34 @@ void loop() {
 
   // ── Execute Feed ────────────────────────────────────────────────────────────
   if (triggerDashboardFeed) {
-    bool wasPhysical     = isPhysicalDispense; // capture before resetting
-    isPhysicalDispense   = false;
-    systemJammed         = false;
-    digitalWrite(ALERT_LED_PIN, LOW);
-    dispenseByWeight();
-    triggerDashboardFeed = false;
+    if (dispState != DISPENSE_IDLE) {
+      // A dispense is already running (scheduled feed, button, or a duplicate
+      // MQTT command overlapped it). Ignore rather than reset the state machine
+      // mid-cycle — that used to unconditionally clear systemJammed and restart
+      // dispenseByWeight() from DISPENSE_INIT, causing overfeeding or forcing
+      // the motor against an unresolved jam.
+      Serial.println("[Feed] Ignored — dispense already in progress.");
+      triggerDashboardFeed = false;
+      isPhysicalDispense   = false;
+    } else {
+      bool wasPhysical     = isPhysicalDispense; // capture before resetting
+      isPhysicalDispense   = false;
+      systemJammed         = false;
+      digitalWrite(ALERT_LED_PIN, LOW);
+      dispenseByWeight();
+      triggerDashboardFeed = false;
 
-    // Only publish TOPIC_FEED_LOG for physical button presses.
-    // Dashboard/MQTT-triggered feeds are already logged by the server at command time,
-    // so publishing here too would create duplicate Firestore records.
-    if (wasPhysical) {
-      StaticJsonDocument<128> feedDoc;
-      feedDoc["portion_g"] = targetWeight; // Always log the requested target for physical dispenses
-      feedDoc["type"]      = "physical";
-      char feedBuf[128];
-      serializeJson(feedDoc, feedBuf);
-      client.publish(TOPIC_FEED_LOG, feedBuf);
+      // Only publish TOPIC_FEED_LOG for physical button presses.
+      // Dashboard/MQTT-triggered feeds are already logged by the server at command time,
+      // so publishing here too would create duplicate Firestore records.
+      if (wasPhysical) {
+        StaticJsonDocument<128> feedDoc;
+        feedDoc["portion_g"] = targetWeight; // Always log the requested target for physical dispenses
+        feedDoc["type"]      = "physical";
+        char feedBuf[128];
+        serializeJson(feedDoc, feedBuf);
+        client.publish(TOPIC_FEED_LOG, feedBuf);
+      }
     }
   }
 
