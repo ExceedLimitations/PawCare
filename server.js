@@ -295,7 +295,12 @@ function padDays(data, daysBack) {
 
   for (let i = daysBack; i >= 0; i--) {
     const d = new Date(todayLocal);
-    d.setDate(d.getDate() - i);
+    // Use UTC getters/setters, not local ones — todayLocal already has LOCAL_TZ's
+    // offset baked into its epoch value. Reading it back with local Date methods
+    // would additionally apply the process's own TZ offset (when process.env.TZ
+    // is set, e.g. to match LOCAL_TZ), double-shifting the date. getLocalCutoffISO
+    // above uses the same UTC-getter approach for this reason.
+    d.setUTCDate(d.getUTCDate() - i);
     const iso = d.toISOString().slice(0, 10);
     const found = data.find(r => r.day === iso);
     result.push(found || { day: iso, count: 0, total_g: 0 });
