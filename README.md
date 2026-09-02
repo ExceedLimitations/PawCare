@@ -26,6 +26,7 @@ A full-stack IoT system for monitoring and controlling an automatic pet feeder i
 18. [Notification System](#notification-system)
 19. [Security Model](#security-model)
 20. [Troubleshooting](#troubleshooting)
+21. [Changelog](#changelog)
 
 ---
 
@@ -45,8 +46,9 @@ A full-stack IoT system for monitoring and controlling an automatic pet feeder i
 | **Pet profile** | Store your pet's name, breed, age, birthday, and avatar photo |
 | **OTA firmware updates** | Push new ESP32 firmware from the dashboard without physical access to the device |
 | **Automated firmware builds** | GitHub Actions compiles `firmware.ino` on every push, updates `firmware/firmware.bin` and `firmware/version.json` automatically |
-| **Demo mode** | Dashboard shows simulated sensor data automatically when no hardware is connected |
-| **JWT authentication** | All REST endpoints and Socket.io connections require a signed JWT |
+| **Overlap-safe dispensing** | A feed command that arrives while a dispense is already running (scheduled + button + duplicate MQTT, etc.) is ignored instead of resetting the state machine mid-cycle |
+| **Empty-hopper detection** | If several dispense pulses in a row produce no measurable weight gain, the firmware gives up after ~3–4 s and raises a "hopper empty" alert instead of grinding through the full 35 s timeout |
+| **JWT authentication** | All REST endpoints, Socket.io connections, and Netlify serverless functions require a signed JWT |
 | **Rate limiting** | Login (10 req/min) and feed (30 req/min) endpoints are rate-limited |
 
 ---
@@ -87,8 +89,8 @@ PawCare/
 ├── netlify/
 │   └── functions/                  # Netlify serverless functions (static deployment)
 │       ├── _firebase.js            # Shared Firestore initializer
-│       ├── _helpers.js             # Shared utility functions
-│       ├── _data.js                # Shared data-access helpers
+│       ├── _helpers.js             # Shared response helpers + requireAuth() JWT check
+│       ├── _data.js                # Unused — legacy mock-data helpers from an earlier no-DB version
 │       ├── feed.js                 # POST /feed
 │       ├── feedings-today.js       # GET /feedings/today
 │       ├── feedings-weekly.js      # GET /feedings/weekly
@@ -105,21 +107,22 @@ PawCare/
 │   ├── package.json
 │   └── src/
 │       ├── main.jsx
-│       ├── App.jsx                 # Root component & all dashboard logic
+│       ├── App.jsx                 # Root component — all dashboard state & logic lives here
 │       ├── index.css               # Global styles
 │       ├── components/
-│       │   └── MetricPanels.jsx    # Reusable stat-card panels
+│       │   └── MetricPanels.jsx    # Unused — not imported by App.jsx
 │       └── hooks/
-│           ├── useDashboard.js     # API calls & state management helpers
-│           ├── useSocket.js        # Socket.io connection & event handlers
-│           └── useNotifications.js # Browser notification permission & SW delivery
+│           ├── useDashboard.js     # Unused — exports useNextFeed(), not imported by App.jsx
+│           ├── useSocket.js        # Socket.io connection & event handlers (used)
+│           └── useNotifications.js # Browser notification permission & SW delivery (used)
 │   └── public/
 │       └── sw.js                   # Service Worker: OS-level push notification handler
 ├── package.json                    # Server (backend) dependencies
 ├── .env.example                    # Template for your .env file
-├── .gitignore
-└── rewrite_firmware.py             # Helper script to regenerate firmware.ino
+└── .gitignore
 ```
+
+> **Note:** `netlify/functions/_data.js`, `frontend/src/components/MetricPanels.jsx`, and `frontend/src/hooks/useDashboard.js` are currently unreferenced by any code path — leftovers from an earlier iteration of the dashboard. They're harmless to leave in place, but don't expect edits there to have any effect until something actually imports them.
 
 ---
 
@@ -227,7 +230,7 @@ npm run dev          # Vite dev server — usually http://localhost:5173
 
 The Vite dev server proxies all `/feed`, `/schedules`, `/status`, and socket requests to `localhost:3000`, so CORS is not an issue in development.
 
-> **No hardware?** The dashboard automatically enters **demo simulation mode** — it generates random sensor readings so you can explore the UI without any physical device connected.
+> **No hardware?** There is currently no simulated/demo data mode in the frontend — without a device publishing to MQTT, the dashboard will show zeroed-out stats (0% food level, no recent feedings) rather than synthetic data. `netlify/functions/_data.js` contains leftover mock-data generators from an earlier iteration that did this, but nothing imports it today.
 
 ---
 
@@ -287,6 +290,12 @@ npm run netlify-dev
 
 > **Note:** Socket.io real-time updates and the schedule runner are only available with the full Node.js backend on Render (or equivalent). The Netlify deployment is suitable for read-only or limited-write dashboards without live sensor streaming.
 
+> **⚠️ No `/login` function exists on Netlify.** Every Netlify function requires the same `Authorization: Bearer <JWT>` header that `server.js` enforces (see [Security Model](#security-model)), but `netlify/functions/` has no login handler and `netlify.toml` has no redirect for `/login` — so the dashboard's login screen has nothing to submit to and will 404 on a Netlify-only deployment. To use this mode today you need to either:
+> - Mint a token from a running Node backend's `POST /login` (same `JWT_SECRET` configured on both sides) and set it manually via the browser console: `localStorage.setItem('pawcare_auth', '<token>')`, or
+> - Add a `netlify/functions/login.js` that mirrors `server.js`'s `/login` handler and wire it up in `netlify.toml`.
+>
+> Until one of those is done, treat the Netlify deployment as a functions-only backend for a separately-hosted frontend/session, not a fully self-contained deployment.
+
 ---
 
 ## REST API Reference
@@ -304,7 +313,7 @@ All endpoints except `GET /health`, `POST /login`, `GET /firmware/version.json`,
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| `POST` | `/feed` | ✅ | Dispatch a food dispense. Body: `{ "portion": 80, "type": "manual" }`. Portion clamped to 1–500 g. |
+| `POST` | `/feed` | ✅ | Dispatch a food dispense. Body: `{ "portion": 80, "type": "manual" }`. Portion clamped to 1–500 g; defaults to 45 g if omitted or invalid. Rate-limited to 30 req/min. |
 | `GET` | `/feedings/today` | ✅ | Today's total feed count and grams. |
 | `GET` | `/feedings/recent` | ✅ | Last 50 feeding records (newest first). |
 | `GET` | `/feedings/weekly` | ✅ | Daily totals for the past 7 days (zero-padded). |
@@ -390,7 +399,13 @@ All topics use the prefix configured via `MQTT_TOPIC_*` environment variables (d
 { "action": "ota_update" }
 ```
 
-### Device → Server (`/status` or `/sensor`)
+### Device → Server (`/status`) — sent once on MQTT connect
+
+```json
+{ "food_level": 72, "jammed": false, "online": true, "fw_version": "1.3.17" }
+```
+
+### Device → Server (`/sensor`) — periodic telemetry (every ~4 s, and during a dispense)
 
 ```json
 {
@@ -399,7 +414,7 @@ All topics use the prefix configured via `MQTT_TOPIC_*` environment variables (d
   "last_dispensed_g": 50.1,
   "dispense_success": true,
   "bowl_weight": 122.5,
-  "fw_version": "1.3.13"
+  "fw_version": "1.3.17"
 }
 ```
 
@@ -417,10 +432,15 @@ All topics use the prefix configured via `MQTT_TOPIC_*` environment variables (d
 
 ### Device → Server (`/ota_status`)
 
+The `status` field is one of `checking`, `downloading`, `up_to_date`, `success`, or `failed`. `version` and `error` are only present when relevant:
+
 ```json
-{ "state": "downloading", "progress": 45 }
-{ "state": "complete",    "version": "1.3.13" }
-{ "state": "error",       "message": "HTTP error 404" }
+{ "status": "checking" }
+{ "status": "downloading", "version": "1.3.17" }
+{ "status": "up_to_date",  "version": "1.3.17" }
+{ "status": "success",     "version": "1.3.17" }
+{ "status": "failed",      "error": "HTTP 404" }
+{ "status": "failed",      "error": "Malformed version.json" }
 ```
 
 ---
@@ -441,6 +461,8 @@ Flash `firmware.ino` to your ESP32 and wire the components according to the tabl
 | **Status LED** | `GPIO 2` | Solid = online; fast blink = WiFi portal open |
 | **Alert/Error LED** | `GPIO 15` | Flashes on jam or dispense failure |
 | **Manual Dispense Button** | `GPIO 14` | Short press = dispense; hold 3 s at boot = WiFi reset |
+
+> **LEDC channel/timer gotcha:** the servo (`SERVO_CHANNEL`) and buzzer (`BUZZER_CHANNEL`) are both driven via the ESP32 core 2.x `ledcSetup`/`ledcWrite`/`ledcWriteTone` API, **not** the `ESP32Servo` library. On this core, LEDC channels share an underlying timer in pairs: `timer = (channel/2) % 4`. Channels `0` and `1` share a timer — if the servo and buzzer were ever assigned to that pair (as they were until firmware v1.3.16), `ledcWriteTone()` beeping the buzzer would silently reprogram the shared timer's frequency out from under the servo's 50 Hz PWM signal, corrupting it (typically the servo stops responding entirely) for as long as the tone lasted. `SERVO_CHANNEL = 2` and `BUZZER_CHANNEL = 0` currently sit on separate timers — if you ever add another `ledcSetup()`-based peripheral, pick a channel outside `{0,1}` (whichever timer the buzzer/servo don't already use) or move to `ESP32Servo`, which manages its own timer allocation.
 
 ### Hopper Ultrasonic Calibration
 
@@ -490,9 +512,10 @@ Install these via Arduino Library Manager (Sketch → Include Library → Manage
 | `PubSubClient` | Nick O'Leary |
 | `ArduinoJson` | Benoit Blanchon |
 | `HX711 Arduino Library` | bogde |
-| `ESP32Servo` | Kevin Harrington |
 
 The following are built into the ESP32 Arduino core and do not need separate installation: `WiFi`, `Preferences`, `HTTPUpdate`, `WiFiClientSecure`.
+
+> **`ESP32Servo` is not actually used.** `compile-firmware.yml` still installs it and it doesn't hurt to have on your machine, but `firmware.ino` doesn't `#include` it — the servo gate is driven directly via the ESP32 core's built-in `ledcSetup`/`ledcAttachPin`/`ledcWrite` API (see `setServoAngle()`). See the LEDC timer-sharing note in [Hardware & Wiring](#hardware--wiring) if you're touching servo/buzzer PWM code.
 
 ### First Boot — WiFi Setup
 
@@ -514,7 +537,7 @@ All settings are saved to ESP32 NVS flash and survive reboots. To reset WiFi and
 
 | Constant | Current Value | Description |
 |---|---|---|
-| `FIRMWARE_VERSION` | `"1.3.13"` | Must match `firmware/version.json` to avoid boot-loop OTA |
+| `FIRMWARE_VERSION` | `"1.3.17"` | Must match `firmware/version.json` to avoid boot-loop OTA |
 | `OTA_VERSION_URL` | `https://pawcare-rcd9.onrender.com/firmware/version.json` | Where the device checks for updates |
 | `HOPPER_FULL_CM` | `2` | HC-SR04 reading (cm) when hopper is full → 100% |
 | `HOPPER_EMPTY_CM` | `9` | HC-SR04 reading (cm) when hopper is empty → 0% |
@@ -525,6 +548,24 @@ All settings are saved to ESP32 NVS flash and survive reboots. To reset WiFi and
 | `IR_JAM_STATE` | `LOW` | Flip to `HIGH` for break-beam IR sensors |
 | `SERVO_CLOSED` | `90°` | Servo angle for sealed gate |
 | `SERVO_OPEN` | `20°` | Servo angle for fully open gate |
+
+### Non-Blocking Dispense State Machine
+
+`handleDispenser()` runs on every `loop()` iteration and drives dispensing through a state machine (`DISPENSE_IDLE → DISPENSE_INIT → DISPENSE_SETTLE → DISPENSE_PULSE_OPEN ⇄ DISPENSE_PULSE_SETTLE → DISPENSE_FINAL_SETTLE → DISPENSE_EVALUATE → DISPENSE_IDLE`) instead of blocking with `delay()`. Each pulse briefly opens the gate for a duration proportional to the remaining weight, then closes it and waits for the HX711 reading to settle before deciding whether to pulse again.
+
+| Constant | Value | Description |
+|---|---|---|
+| `PULSE_MS_PER_GRAM` | `8` ms/g | Pulse duration scales with grams remaining |
+| `PULSE_MIN_MS` / `PULSE_MAX_MS` | `100` / `300` ms | Clamp range for a single pulse's open duration |
+| `PULSE_SETTLE_MS` | `700` ms | Wait after closing the gate for the load cell reading to stabilize before pulsing again |
+| `DISPENSE_DONE_G` | `0.5` g | Remaining weight below which the dispense is considered complete |
+| `DISPENSE_STALL_PULSES` | `4` | Consecutive pulses with negligible weight gain before aborting as "hopper empty" (v1.3.17+) |
+| `DISPENSE_STALL_GAIN_G` | `1.0` g | Minimum weight gain per pulse needed to reset the stall counter (v1.3.17+) |
+| *(hard timeout)* | `35000` ms | Absolute ceiling on any single dispense attempt, regardless of state |
+
+**Two safeguards worth knowing about if you're debugging a stuck feeder:**
+- **Overlap guard (v1.3.16+):** a feed command that arrives while `dispState != DISPENSE_IDLE` is ignored rather than resetting the state machine — this used to unconditionally clear `systemJammed` and restart from `DISPENSE_INIT`, which could force the auger against an unresolved jam or double-dispense.
+- **Empty-hopper stall detection (v1.3.17+):** the IR sensor only catches jams (something physically blocking the beam) — it never fires when the hopper is simply empty, since there's nothing there to block. `DISPENSE_PULSE_SETTLE` separately tracks weight gain across pulses and aborts after `DISPENSE_STALL_PULSES` consecutive pulses below `DISPENSE_STALL_GAIN_G`, instead of grinding through the full 35 s timeout on every attempt.
 
 ---
 
@@ -548,12 +589,12 @@ You only need to **bump `FIRMWARE_VERSION` in `firmware.ino`** and push. Everyth
 
 ```cpp
 // firmware.ino
-#define FIRMWARE_VERSION  "1.3.14"   // ← change this
+#define FIRMWARE_VERSION  "1.3.18"   // ← change this
 ```
 
 ```bash
 git add firmware.ino
-git commit -m "chore: bump firmware version 1.3.13 -> 1.3.14"
+git commit -m "chore: bump firmware version 1.3.17 -> 1.3.18"
 git push origin main
 # GitHub Actions picks it up, compiles, and pushes firmware.bin + version.json
 ```
@@ -581,7 +622,7 @@ PawCare supports pushing new firmware to the ESP32 without physical access.
 1. Compile in Arduino IDE: **Sketch → Export Compiled Binary** → copy the `.bin` to `firmware/firmware.bin`
 2. Update `firmware/version.json`:
    ```json
-   { "version": "1.3.14", "url": "https://pawcare-rcd9.onrender.com/firmware/firmware.bin" }
+   { "version": "1.3.18", "url": "https://pawcare-rcd9.onrender.com/firmware/firmware.bin" }
    ```
 3. Bump `FIRMWARE_VERSION` in `firmware.ino` to the **same** string
 4. Deploy the updated server (with the new `firmware/` files) to Render
@@ -626,15 +667,15 @@ The dashboard monitors `food_level` and fires a notification whenever the reserv
 
 ### Notification Persistence
 
-Every notification is saved to the `notifications` Firestore collection with:
-- `id` — unique string (starts with `Date.now()` ms timestamp)
+Every notification is saved to the `notifications` Firestore collection (via `POST /notifications` in `server.js`) with:
+- `id` — unique string; the frontend generates it as `Date.now()` + 5 random base36 chars, so it always embeds a millisecond timestamp
 - `type` — `success` | `info` | `warning` | `error`
 - `title` — short heading
 - `message` — full description
-- `time` — `HH:MM:SS` (Asia/Manila timezone)
-- `date` — `M/D/YYYY` (Asia/Manila timezone)
+- `time` — `HH:MM:SS`, computed client-side in Asia/Manila before the request is sent
+- `timestamp` — full ISO 8601 string, generated server-side at save time
 
-Notifications persist across page reloads and are loaded on startup. The `date` field is displayed alongside `time` in the System Notifications panel. For older records that predate the `date` field, the date is derived from the `id` timestamp automatically.
+Notifications persist across page reloads and are loaded on startup (`GET /notifications`, last 100, newest first). **Note:** `server.js` does not persist a `date` field at all — only `id`, `type`, `title`, `message`, `time`, and `timestamp` are written to Firestore. The System Notifications panel always derives the displayed date client-side from the millisecond timestamp embedded in `id` (falling back to `date` if a document happens to have one, e.g. from a different write path). This isn't a fallback for "older" records — it's the only way a date ever gets displayed today.
 
 ---
 
@@ -644,6 +685,7 @@ Notifications persist across page reloads and are loaded on startup. The `date` 
 |---|---|
 | **Dashboard login** | Username + password validated against `ADMIN_USER` / `ADMIN_PASS` env vars |
 | **API auth** | JWT signed with `JWT_SECRET`; 8-hour expiry; all routes except login/health/OTA download require `Authorization: Bearer <token>` |
+| **Netlify Functions auth** | Every function in `netlify/functions/` calls the same JWT check (`requireAuth()` in `_helpers.js`) as `server.js`'s `authenticate` middleware — requires `JWT_SECRET` to also be set in the Netlify site's environment variables, or every function returns `500`. See the login caveat in [Deploying to Netlify](#deploying-to-netlify-frontend-only). |
 | **Socket.io auth** | JWT verified in Socket.io middleware on every connection |
 | **Rate limiting** | Login: 10 req/min; Feed (HTTP): 30 req/min; Feed (Socket): 30 events/min per socket |
 | **Startup guard** | Server refuses to start if `ADMIN_USER`, `ADMIN_PASS`, or `JWT_SECRET` are unset |
@@ -670,6 +712,16 @@ Notifications persist across page reloads and are loaded on startup. The `date` 
 
 - Hold `GPIO 14` button for 3 seconds at boot to reset WiFi and re-open the captive portal.
 
+### Servo doesn't turn (or moves erratically) when dispensing
+
+- This was a real bug, fixed in firmware v1.3.16: `SERVO_CHANNEL` and `BUZZER_CHANNEL` used to be assigned to LEDC channels that shared the same underlying hardware timer on ESP32 core 2.x. Every buzzer beep (`ledcWriteTone()`) silently reprogrammed that shared timer's frequency, corrupting the servo's 50 Hz PWM signal for as long as the tone lasted — and `startBeeps(2, 100)` fires at the very start of every dispense. If you've since added another `ledcSetup()`-based peripheral and the servo stops responding again, check whether its channel shares a timer with the servo or buzzer (`timer = (channel/2) % 4`) — see [Hardware & Wiring](#hardware--wiring).
+
+### Dispensing seems unresponsive / repeated button presses do nothing
+
+- If the hopper is genuinely empty, firmware ≤ v1.3.15 would pulse the auger uselessly for the full 35 s hard timeout on every attempt. Combined with the overlap guard added in v1.3.16 (which correctly ignores a feed command that arrives while a dispense is already running), retries during that 35 s window did nothing and looked like the feeder had stopped responding.
+- Fixed in v1.3.17: the dispenser now tracks weight gain across pulses and aborts after `DISPENSE_STALL_PULSES` (4) consecutive pulses with less than `DISPENSE_STALL_GAIN_G` (1 g) of progress, firing a "HOPPER EMPTY" alert within ~3–4 s instead of waiting the full 35 s.
+- If it's still happening on v1.3.17+, check the Serial Monitor for `[Dispense]` log lines — a real mechanical jam (IR beam blocked) is reported separately as `CRITICAL FAULT: Mechanical Jam Detected` and requires physically clearing the chute.
+
 ### Food level reads inaccurately
 
 - Recalibrate `HOPPER_EMPTY_CM` using the Serial Monitor: empty the hopper, open the lid, note the distance reading, and set `HOPPER_EMPTY_CM` to that value.
@@ -686,7 +738,7 @@ Notifications persist across page reloads and are loaded on startup. The `date` 
 
 ### Notifications show no date
 
-- Older notifications saved before the `date` field was introduced show no date in Firestore. The dashboard automatically derives the date from the notification `id` (which embeds `Date.now()`) so all records display a correct date without any migration.
+- `server.js` never writes a `date` field to Firestore (see [Notification Persistence](#notification-system)) — this isn't a migration gap, it's how the current code works. The dashboard always derives the displayed date client-side from the millisecond timestamp embedded in the notification's `id`, so this requires no fix and no migration.
 
 ### OTA update fails
 
@@ -694,12 +746,35 @@ Notifications persist across page reloads and are loaded on startup. The `date` 
 - If using CI, this is handled automatically — just bump `FIRMWARE_VERSION` in `firmware.ino` and push.
 - Verify the `OTA_VERSION_URL` is reachable from the device's network.
 
+### Netlify deployment: login screen won't work / every API call returns 401
+
+- Expected with the current code — see the warning in [Deploying to Netlify](#deploying-to-netlify-frontend-only). There is no `/login` Netlify function, so the dashboard's login form has nothing to submit to. Either mint a token from a Node backend's `/login` and set it manually (`localStorage.setItem('pawcare_auth', '<token>')`), or add a `netlify/functions/login.js`.
+- If you *do* have a token and are still getting 401/500s, confirm the Netlify site's environment variables include the same `JWT_SECRET` as whatever issued the token — a mismatch fails verification, and a missing `JWT_SECRET` makes every function return `500` before it even checks the token.
+
 ### GitHub Actions compile fails
 
 - Check the Actions tab for errors. Common causes:
   - Missing library — add it to the `arduino-cli lib install` step in `compile-firmware.yml`
   - Syntax error in `firmware.ino` — fix the compile error locally first
   - Permissions issue — ensure the workflow has `contents: write` permission (already configured)
+
+---
+
+## Changelog
+
+Firmware version and notable fixes since this README was last brought up to date (previously pinned at v1.3.13). Backend/frontend/Netlify fixes don't carry a version number but are dated here for reference.
+
+| Version / Date | Change |
+|---|---|
+| **v1.3.14** | Servo de-energize between dispenses; ultrasonic read rate-limited during dispensing (it blocks ~30ms/call, which was starving the dispense state machine of weight checks); stale comment cleanup. |
+| **v1.3.15** | Re-attach the servo's LEDC pin on every dispense — a workaround for `ledcWrite(channel, 0)` appearing to halt the channel on ESP32 core 2.x. (Superseded by the real root-cause fix in v1.3.16, below.) |
+| **v1.3.16** | **Root cause of "servo doesn't turn":** `SERVO_CHANNEL` and `BUZZER_CHANNEL` shared an LEDC timer, so every beep corrupted the servo's PWM signal — moved the servo to a non-conflicting channel (see [Hardware & Wiring](#hardware--wiring)). Also added the dispense overlap guard (an in-flight or jammed dispense no longer gets silently reset by a new feed command) and a `failed` OTA status on malformed `version.json` (previously left the dashboard's OTA badge stuck on "Checking..."). |
+| **v1.3.17** | Empty-hopper stall detection — abort a dispense after ~3–4 s of no weight progress instead of running the full 35 s hard timeout on every attempt (see [Non-Blocking Dispense State Machine](#non-blocking-dispense-state-machine)). |
+| **2026-09-03 (backend/Netlify)** | Added JWT auth (`requireAuth()`) to every Netlify Function — they previously had none, unlike the identical `server.js` routes, so anyone reaching the Netlify deployment could trigger dispenses or edit schedules/profile unauthenticated. Also fixed `feed.js`'s default MQTT command topic (didn't match the device's actual topic), `profile.js` silently dropping `birthday`/`age` on save, and a timezone double-shift in `server.js`'s `padDays()` that could mislabel dates on the weekly/monthly chart. |
+| **2026-09-03 (frontend)** | "Today" feeding count now re-syncs from the server when the Manila-local date rolls over, instead of drifting forever if a tab is left open past midnight. Feeding-timeline "completed" matching now checks time as well as label, so two schedules sharing a label no longer mark each other complete/missed. |
+| **chore** | Removed `rewrite_firmware.py` — a one-off, already-applied migration script hardcoded to another contributor's local path. |
+
+For the full commit-level history, see `git log`.
 
 ---
 
