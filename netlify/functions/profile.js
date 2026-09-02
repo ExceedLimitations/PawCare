@@ -1,15 +1,18 @@
 "use strict";
-const { json, preflight } = require("./_helpers");
+const { json, preflight, requireAuth } = require("./_helpers");
 const { getFirestore } = require("./_firebase");
 
 const DEFAULT_PROFILE = { name: "Bantay", breed: "Golden Retriever" };
 
 /**
  * GET  /profile  → return saved profile (Firestore)
- * POST /profile  → save { name, breed, avatar } to Firestore
+ * POST /profile  → save { name, breed, avatar, birthday, age } to Firestore
  */
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return preflight();
+
+  const auth = requireAuth(event);
+  if (auth.error) return auth.error;
 
   const firestore = getFirestore();
   if (!firestore) return json(500, { error: "Database unavailable" });
@@ -32,6 +35,8 @@ exports.handler = async (event) => {
       name: (body.name || "").trim() || "Bantay",
       breed: (body.breed || "").trim() || "Golden Retriever",
       avatar: body.avatar || null,
+      birthday: body.birthday || null,
+      age: body.age != null && body.age !== "" ? Number(body.age) : null,
     };
     try {
       await firestore.collection("config").doc("profile").set(profile);

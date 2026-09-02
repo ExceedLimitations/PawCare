@@ -1,5 +1,5 @@
 "use strict";
-const { json, preflight } = require("./_helpers");
+const { json, preflight, requireAuth } = require("./_helpers");
 const { getFirestore } = require("./_firebase");
 
 /**
@@ -8,6 +8,9 @@ const { getFirestore } = require("./_firebase");
  */
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return preflight();
+
+  const auth = requireAuth(event);
+  if (auth.error) return auth.error;
 
   // Netlify passes the :id segment as a query param via redirect rules
   const id = event.queryStringParameters?.id ||

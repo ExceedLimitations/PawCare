@@ -1,6 +1,6 @@
 "use strict";
 const { getFirestore } = require("./_firebase");
-const { json, preflight } = require("./_helpers");
+const { json, preflight, requireAuth } = require("./_helpers");
 
 /** POST /feed — Trigger a dispense (publishes MQTT via HiveMQ public broker) */
 exports.handler = async (event) => {
@@ -10,13 +10,16 @@ exports.handler = async (event) => {
     return json(405, { error: "Method not allowed" });
   }
 
+  const auth = requireAuth(event);
+  if (auth.error) return auth.error;
+
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch (_) {}
 
   const portion = Math.min(500, Math.max(1, parseInt(body.portion) || 80));
   const type = body.type || "manual";
 
-  const MQTT_TOPIC_CMD = process.env.MQTT_TOPIC_CMD || "pawfeed/command";
+  const MQTT_TOPIC_CMD = process.env.MQTT_TOPIC_CMD || "pawfeed/device01/command";
 
   // Best-effort MQTT publish via HTTPS — silently ignore failures
   try {

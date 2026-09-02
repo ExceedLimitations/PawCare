@@ -1,5 +1,7 @@
 "use strict";
 
+const jwt = require("jsonwebtoken");
+
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 
 const preflight = () => ({
@@ -17,4 +19,23 @@ const json = (statusCode, body) => ({
   body: JSON.stringify(body),
 });
 
-module.exports = { preflight, json };
+/**
+ * Verifies the same Bearer JWT that server.js's `authenticate` middleware requires.
+ * Returns { user } on success or { error: <response> } to return directly from the handler.
+ */
+const requireAuth = (event) => {
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    return { error: json(500, { error: "Server misconfigured: JWT_SECRET not set" }) };
+  }
+  const header = event.headers?.authorization || event.headers?.Authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) return { error: json(401, { error: "Authentication required" }) };
+  try {
+    return { user: jwt.verify(token, JWT_SECRET) };
+  } catch {
+    return { error: json(401, { error: "Invalid or expired token" }) };
+  }
+};
+
+module.exports = { preflight, json, requireAuth };

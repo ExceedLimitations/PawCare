@@ -1,10 +1,13 @@
 "use strict";
-const { json, preflight } = require("./_helpers");
+const { json, preflight, requireAuth } = require("./_helpers");
 const { getFirestore } = require("./_firebase");
 
 /** REST /schedules */
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return preflight();
+
+  const auth = requireAuth(event);
+  if (auth.error) return auth.error;
 
   const firestore = getFirestore();
   if (!firestore) return json(500, { error: "Database unavailable" });
