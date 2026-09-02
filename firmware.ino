@@ -101,7 +101,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.16"
+#define FIRMWARE_VERSION  "1.3.17"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA) — expires 2035-06-04
@@ -407,6 +407,10 @@ bool          dispIrBlocked = false;
 int           dispJamBlockedCount = 0;
 unsigned long lastDispenseTelemetry = 0;
 unsigned long currentPulseDuration = 0;
+float         dispNoProgressBaseline = 0;  // dispensed-so-far at the last pulse that made real progress
+int           dispNoProgressCount    = 0;  // consecutive pulses since then with negligible weight gain
+#define DISPENSE_STALL_PULSES 4    // consecutive no-progress pulses before giving up as "hopper empty"
+#define DISPENSE_STALL_GAIN_G 1.0  // grams of progress needed to reset the stall counter
 
 void handleDispenser() {
     if (dispState == DISPENSE_IDLE) return;
@@ -440,6 +444,8 @@ void handleDispenser() {
             dispStartTime = millis();
             dispMotorSettleTime = millis();
             dispIrBlocked = false;
+            dispNoProgressBaseline = 0;
+            dispNoProgressCount    = 0;
             dispState = DISPENSE_SETTLE;
             break;
 
@@ -468,11 +474,32 @@ void handleDispenser() {
                     dispState = DISPENSE_FINAL_SETTLE;
                     dispTrickleTimer = millis();
                 } else {
-                    currentPulseDuration = constrain(remaining * PULSE_MS_PER_GRAM, PULSE_MIN_MS, PULSE_MAX_MS);
-                    dispTrickleTimer = millis();
-                    openHopper();
-                    dispState = DISPENSE_PULSE_OPEN;
-                    Serial.printf("[Dispense] Pulse: %.1fg remaining, duration %lums\n", remaining, currentPulseDuration);
+                    // Track whether this pulse made real progress, to catch an empty
+                    // hopper: the IR jam check never fires here since nothing is
+                    // blocking the beam when there's simply no food left to feed it.
+                    if ((dispensed - dispNoProgressBaseline) >= DISPENSE_STALL_GAIN_G) {
+                        dispNoProgressBaseline = dispensed;
+                        dispNoProgressCount    = 0;
+                    } else {
+                        dispNoProgressCount++;
+                    }
+
+                    if (dispNoProgressCount >= DISPENSE_STALL_PULSES) {
+                        // Several pulses in a row with no meaningful weight gain — the
+                        // auger is turning but nothing is coming out. Give up now
+                        // instead of grinding through the full 35s hard timeout on
+                        // every attempt.
+                        Serial.println("[Dispense] No food detected after repeated pulses — hopper is empty.");
+                        triggerFlowchartAlert("HOPPER EMPTY: No food dispensed after repeated attempts.");
+                        dispState = DISPENSE_FINAL_SETTLE;
+                        dispTrickleTimer = millis();
+                    } else {
+                        currentPulseDuration = constrain(remaining * PULSE_MS_PER_GRAM, PULSE_MIN_MS, PULSE_MAX_MS);
+                        dispTrickleTimer = millis();
+                        openHopper();
+                        dispState = DISPENSE_PULSE_OPEN;
+                        Serial.printf("[Dispense] Pulse: %.1fg remaining, duration %lums\n", remaining, currentPulseDuration);
+                    }
                 }
             }
             break;
