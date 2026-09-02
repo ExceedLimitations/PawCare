@@ -171,11 +171,15 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
               const todayManila = new Date(Date.now() + MANILA_OFFSET_MS)
                 .toISOString().slice(0, 10);
 
+              // Match on time as well as label — the server only fires a schedule
+              // when the clock hits its exact HH:MM, so this reliably tells apart
+              // two enabled schedules that happen to share a label.
               const wasDispensed = recentFeedings.some(f => {
                 const fedManila = new Date(
                   new Date(f.timestamp).getTime() + MANILA_OFFSET_MS
                 );
                 return fedManila.toISOString().slice(0, 10) === todayManila
+                    && fedManila.toISOString().slice(11, 16) === s.time
                     && f.type === 'scheduled'
                     && f.label === s.label;
               });
@@ -684,6 +688,29 @@ export default function App() {
     init();
 
   }, [handleStatusUpdate, isAuthenticated, authFetch]);
+
+  // feedingsToday is only ever incremented by 'feeding_done' socket events and
+  // never reset (the server never emits 'feedings_today'), so a dashboard tab
+  // left open across local midnight keeps counting yesterday's feedings into
+  // today's total. Poll for the Manila-local date rolling over and re-fetch.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const getManilaDateStr = () => {
+      const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+      return new Date(Date.now() + MANILA_OFFSET_MS).toISOString().slice(0, 10);
+    };
+    let currentDay = getManilaDateStr();
+    const timer = setInterval(() => {
+      const day = getManilaDateStr();
+      if (day !== currentDay) {
+        currentDay = day;
+        authFetch('/feedings/today').then(r => r.json())
+          .then(d => { if (d && !d.error) setFeedingsToday(d.count || 0); })
+          .catch(() => {});
+      }
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [isAuthenticated, authFetch]);
 
 
   const triggerManualDispense = () => {
