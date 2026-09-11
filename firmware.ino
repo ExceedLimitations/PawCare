@@ -101,7 +101,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.17"
+#define FIRMWARE_VERSION  "1.3.18"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA) — expires 2035-06-04
@@ -415,8 +415,12 @@ int           dispNoProgressCount    = 0;  // consecutive pulses since then with
 void handleDispenser() {
     if (dispState == DISPENSE_IDLE) return;
 
-    // Hard timeout (35 s)
-    if (dispState != DISPENSE_IDLE && millis() - dispStartTime > 35000) {
+    // Hard timeout (35 s). Excludes FINAL_SETTLE/EVALUATE: dispStartTime is only reset in
+    // DISPENSE_INIT, so once past 35s this would otherwise keep re-triggering on every call
+    // forever, resetting dispTrickleTimer each time and never letting the switch below reach
+    // DISPENSE_EVALUATE — permanently wedging dispState off DISPENSE_IDLE.
+    if (dispState != DISPENSE_FINAL_SETTLE && dispState != DISPENSE_EVALUATE
+        && millis() - dispStartTime > 35000) {
         Serial.println("[Dispense] TIMEOUT — stopping.");
         dispState = DISPENSE_FINAL_SETTLE;
         closeHopper();
@@ -444,6 +448,7 @@ void handleDispenser() {
             dispStartTime = millis();
             dispMotorSettleTime = millis();
             dispIrBlocked = false;
+            dispJamBlockedCount = 0;
             dispNoProgressBaseline = 0;
             dispNoProgressCount    = 0;
             dispState = DISPENSE_SETTLE;
@@ -514,8 +519,12 @@ void handleDispenser() {
             lastDispensedWeight = currentBowlWeight - dispStartingWeight;
             
             if (lastDispensedWeight < 0) lastDispensedWeight = 0;
-            
-            if (lastDispensedWeight >= (targetWeight - 3.0)) {
+
+            // Require a minimum meaningful amount, not just the target-3.0g tolerance —
+            // for small targets (<=3g) that tolerance alone is satisfied by ~0g dispensed,
+            // which would call an empty-hopper abort a "success". Applies uniformly to
+            // every abort path (stall, jam, hard timeout), not just one of them.
+            if (lastDispensedWeight >= (targetWeight - 3.0) && lastDispensedWeight >= DISPENSE_DONE_G) {
                 lastDispenseSuccessful = true;
                 Serial.printf("[Dispense] Success: %.1fg dispensed (target %dg, error %.1fg)\n",
                               lastDispensedWeight, targetWeight, lastDispensedWeight - targetWeight);
@@ -561,6 +570,10 @@ void handleDispenser() {
                             dispIrBlocked = false;
                             dispJamBlockedCount = 0;
                             if (dispState == DISPENSE_PULSE_OPEN) {
+                                // Reset so the reopened pulse gets its full currentPulseDuration —
+                                // otherwise the stale (pre-delay) timer makes PULSE_OPEN's own check
+                                // close the hopper again almost instantly.
+                                dispTrickleTimer = millis();
                                 openHopper();
                             }
                         }
@@ -726,8 +739,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
   String action = doc["action"] | "";
 
   if (action == "feed") {
-    // Dashboard sends portion_g; fall back to current targetWeight if absent
-    if (doc.containsKey("portion_g")) {
+    // Dashboard sends portion_g; fall back to current targetWeight if absent.
+    // Only apply it while idle — the main loop ignores triggerDashboardFeed when a
+    // dispense is already running, but targetWeight is a shared global, so applying
+    // it unconditionally here would still corrupt the in-flight dispense's target.
+    if (doc.containsKey("portion_g") && dispState == DISPENSE_IDLE) {
       targetWeight = doc["portion_g"].as<int>();
     }
     Serial.printf("[CMD] Feed command received — portion_g=%dg\n", targetWeight);
@@ -941,12 +957,17 @@ void loop() {
       triggerTare = true; // defer to main loop for safe execution
       tareArmed   = false;
 
-    } else {
+    } else if (dispState == DISPENSE_IDLE) {
       // ── SHORT PRESS: manual dispense ─────────────────────────────────────
+      // Guarded on idle — targetWeight is a shared global, so setting it while a
+      // dispense is already running would corrupt that dispense's target even
+      // though the main loop's busy-guard will ignore this trigger anyway.
       Serial.println("[BTN] Short press — manual dispense.");
       targetWeight         = 45;
       triggerDashboardFeed = true;
       isPhysicalDispense   = true; // mark as physical so TOPIC_FEED_LOG is published
+    } else {
+      Serial.println("[BTN] Short press ignored — dispense already in progress.");
     }
   }
 
