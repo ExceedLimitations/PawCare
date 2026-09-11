@@ -146,10 +146,22 @@ function authenticate(req, res, next) {
   }
 }
 
+// Constant-time string compare — plain `===` short-circuits on the first
+// mismatched byte, a timing side-channel for guessing the admin credentials.
+function timingSafeStringEqual(a, b) {
+  const bufA = Buffer.from(String(a ?? ""));
+  const bufB = Buffer.from(String(b ?? ""));
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, Buffer.alloc(bufA.length)); // keep timing uniform
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 /* ── Login (public) ───────────────────────────────────────── */
 app.post("/login", loginLimiter, (req, res) => {
   const { username, password } = req.body;
-  if (username === ADMIN_USER && password === ADMIN_PASS) {
+  if (timingSafeStringEqual(username, ADMIN_USER) && timingSafeStringEqual(password, ADMIN_PASS)) {
     const token = jwt.sign({ sub: username }, JWT_SECRET, { expiresIn: "8h" });
     res.json({ success: true, token });
   } else {
@@ -251,7 +263,7 @@ app.get("/feedings/today", authenticate, async (_req, res) => {
     const snap = await firestoreDb.collection("feedings").where("timestamp", ">=", todayCutoff).get();
     let count = 0;
     let total_g = 0;
-    snap.forEach(doc => { count++; total_g += doc.data().portion_g; });
+    snap.forEach(doc => { count++; total_g += Number(doc.data().portion_g) || 0; });
     return res.json({ count, total_g });
   } catch (err) {
     console.error("[Firebase] Error fetching today feedings:", err.message);
@@ -270,7 +282,7 @@ async function aggregateFeedings(res, daysBack, keyFn, sortFn) {
       const key = keyFn(f);
       if (!result[key]) result[key] = { key, count: 0, total_g: 0 };
       result[key].count++;
-      result[key].total_g += f.portion_g;
+      result[key].total_g += Number(f.portion_g) || 0;
     });
     return Object.values(result).sort(sortFn);
   } catch (err) {
@@ -382,7 +394,7 @@ app.get("/sensor/history", authenticate, async (_req, res) => {
       const s = doc.data();
       const day = getLocalISO(s.timestamp).slice(0, 10); // group by local date, not UTC date
       if (!byDay[day]) byDay[day] = { day, food_sum: 0, count: 0 };
-      byDay[day].food_sum += s.food_level;
+      byDay[day].food_sum += Number(s.food_level) || 0;
       byDay[day].count++;
     });
     const rows = Object.values(byDay)
@@ -400,18 +412,27 @@ app.get("/sensor/history", authenticate, async (_req, res) => {
 
 /* ── REST: Schedules ───────────────────────────────────────── */
 let schedulesCache = null;
+let schedulesCacheVersion = 0;
 
 async function getSchedules() {
   if (schedulesCache) return schedulesCache;
+  const versionAtFetchStart = schedulesCacheVersion;
   const snap = await firestoreDb.collection("schedules").get();
   const rows = [];
   snap.forEach(doc => rows.push({ id: doc.id, ...doc.data() }));
-  schedulesCache = rows;
+  // Only populate the cache if nothing invalidated it while this fetch was in
+  // flight — otherwise a write landing mid-fetch would have its invalidation
+  // silently clobbered by this now-stale read, leaving the cache wrong until
+  // some future write happens to invalidate it again.
+  if (versionAtFetchStart === schedulesCacheVersion) {
+    schedulesCache = rows;
+  }
   return rows;
 }
 
 function invalidateSchedules() {
   schedulesCache = null;
+  schedulesCacheVersion++;
 }
 
 app.get("/schedules", authenticate, async (_req, res) => {
@@ -446,9 +467,19 @@ app.patch("/schedules/:id", authenticate, async (req, res) => {
   const update = {};
   if (enabled   !== undefined) update.enabled   = !!enabled;
   if (days      !== undefined) update.days      = String(days);
-  if (time      !== undefined) update.time      = String(time);
-  if (portion_g !== undefined) update.portion_g = Number(portion_g);
-  if (label     !== undefined) update.label     = String(label);
+  if (time      !== undefined) {
+    if (!String(time).trim()) return res.status(400).json({ error: "time cannot be empty" });
+    update.time = String(time).trim();
+  }
+  if (portion_g !== undefined) {
+    // Same [1, 500] clamp as POST /schedules (Fix #8) — this update path was
+    // missing it, letting an unclamped or NaN value reach the device verbatim.
+    update.portion_g = Math.min(500, Math.max(1, parseInt(portion_g) || 45));
+  }
+  if (label     !== undefined) {
+    if (!String(label).trim()) return res.status(400).json({ error: "label cannot be empty" });
+    update.label = String(label).trim();
+  }
   if (Object.keys(update).length === 0)
     return res.status(400).json({ error: "No valid fields to update" });
   try {
@@ -489,14 +520,17 @@ app.get("/notifications", authenticate, async (_req, res) => {
 
 // POST /notifications — save a new notification
 app.post("/notifications", authenticate, async (req, res) => {
-  const { id, type, title, message, time } = req.body;
+  const { type, title, message, time, date } = req.body;
   if (!title || !message) return res.status(400).json({ error: "title and message required" });
   const record = {
-    id:        id || crypto.randomUUID(),
+    // Always server-generated — accepting a client-supplied id let any caller
+    // overwrite an existing notification by targeting its id with .set().
+    id:        crypto.randomUUID(),
     type:      type || "info",
     title:     title.trim(),
     message:   message.trim(),
     time:      time || new Date().toLocaleTimeString([], { hour12: false }),
+    date:      date || null,
     timestamp: new Date().toISOString(),
   };
   try {
@@ -512,11 +546,16 @@ app.post("/notifications", authenticate, async (req, res) => {
 app.delete("/notifications", authenticate, async (_req, res) => {
   try {
     const snap = await firestoreDb.collection("notifications").get();
-    const batch = firestoreDb.batch();
-    snap.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
-    console.log(`[Notifications] Cleared ${snap.size} notifications.`);
-    return res.json({ success: true, deleted: snap.size });
+    const docs = snap.docs;
+    // Firestore batches cap at 500 writes — chunk so this doesn't throw once the
+    // collection grows past that (GET only limits reads to 100, nothing limits writes).
+    for (let i = 0; i < docs.length; i += 500) {
+      const batch = firestoreDb.batch();
+      docs.slice(i, i + 500).forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+    }
+    console.log(`[Notifications] Cleared ${docs.length} notifications.`);
+    return res.json({ success: true, deleted: docs.length });
   } catch (err) {
     console.error("[Firebase] Error clearing notifications:", err.message);
     res.status(500).json({ error: "Database error" });
@@ -543,28 +582,28 @@ io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error("Authentication required"));
   try {
-    jwt.verify(token, JWT_SECRET);
+    socket.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch {
     next(new Error("Invalid or expired token"));
   }
 });
 
-// Per-socket feed rate limit — mirrors the REST feedLimiter (30 req / 60 s).
-// Prevents authenticated sockets from bypassing the HTTP-layer rate limiter.
-const socketFeedCounts = new Map(); // socket.id → { count, resetAt }
+// Feed rate limit — mirrors the REST feedLimiter (30 req / 60 s). Keyed by the
+// JWT subject rather than socket.id: socket.id is reissued on every reconnect,
+// so keying on it let a client reset the counter at will just by reconnecting.
+const socketFeedCounts = new Map(); // jwt sub → { count, resetAt }
 
 io.on("connection", async (socket) => {
   console.log(`[Socket.io] Client connected — ${socket.id}`);
-  socketFeedCounts.set(socket.id, { count: 0, resetAt: Date.now() + 60000 });
 
   socket.on("feed", async (data) => {
-    // Rate limit: max 30 feed events per 60 s per socket
+    const limitKey = socket.user?.sub || socket.id;
     const now = Date.now();
-    const limit = socketFeedCounts.get(socket.id) || { count: 0, resetAt: now + 60000 };
+    const limit = socketFeedCounts.get(limitKey) || { count: 0, resetAt: now + 60000 };
     if (now > limit.resetAt) { limit.count = 0; limit.resetAt = now + 60000; }
     limit.count++;
-    socketFeedCounts.set(socket.id, limit);
+    socketFeedCounts.set(limitKey, limit);
     if (limit.count > 30) {
       socket.emit("error", { message: "Too many feed requests. Try again in a minute." });
       return;
@@ -578,37 +617,56 @@ io.on("connection", async (socket) => {
       return;
     }
 
-    mqttClient.publish(
-      TOPIC_CMD,
-      JSON.stringify({ action: "feed", portion_g: portion }),
-      { qos: 1 },
-    );
+    // Mirrors REST /feed's Fix #2: only persist/notify once the MQTT publish is
+    // actually confirmed, so a broker hiccup can't create a phantom feeding record.
     const record = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       portion_g: portion,
       type,
     };
-    try {
-      await firestoreDb.collection("feedings").doc(record.id).set(record);
-      io.emit("feeding_done", record);
-      console.log(`[Feed] ${portion}g (${type})`);
-    } catch (err) {
-      console.error("[Firebase] Error saving socket feed:", err.message);
-    }
+    mqttClient.publish(
+      TOPIC_CMD,
+      JSON.stringify({ action: "feed", portion_g: portion }),
+      { qos: 1 },
+      async (err) => {
+        if (err) {
+          console.error("[Feed] Socket MQTT publish failed:", err.message);
+          socket.emit("error", { message: "MQTT publish failed" });
+          return;
+        }
+        try {
+          await firestoreDb.collection("feedings").doc(record.id).set(record);
+          io.emit("feeding_done", record);
+          console.log(`[Feed] ${portion}g (${type})`);
+        } catch (dbErr) {
+          console.error("[Firebase] Error saving socket feed:", dbErr.message);
+        }
+      }
+    );
   });
   socket.on("tare", () => {
+    if (!mqttClient.connected) {
+      socket.emit("error", { message: "MQTT broker not connected. Cannot tare." });
+      return;
+    }
     mqttClient.publish(
       TOPIC_CMD,
       JSON.stringify({ action: "tare" }),
       { qos: 1 },
+      (err) => {
+        if (err) {
+          console.error("[Tare] MQTT publish failed:", err.message);
+          socket.emit("error", { message: "Failed to send tare command." });
+          return;
+        }
+        io.emit("tare_ack", { timestamp: new Date().toISOString() });
+        console.log("[Tare] Scale tare command sent to device via MQTT.");
+      }
     );
-    io.emit("tare_ack", { timestamp: new Date().toISOString() });
-    console.log("[Tare] Scale tare command sent to device via MQTT.");
   });
 
   socket.on("disconnect", () => {
-    socketFeedCounts.delete(socket.id); // clean up rate-limit entry
     console.log(`[Socket.io] Disconnected — ${socket.id}`);
   });
 });
@@ -676,7 +734,10 @@ mqttClient.on("message", async (topic, payload) => {
     const record = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
-      portion_g: data.portion_g || 100,
+      // Number.isFinite (not `||`) so a legitimate 0g report (e.g. an empty-hopper
+      // dispense) isn't overwritten with the 100g default, and a malformed/non-numeric
+      // payload doesn't poison downstream total_g sums with NaN.
+      portion_g: Number.isFinite(data.portion_g) ? data.portion_g : 100,
       type: "physical",
     };
     try {
@@ -696,17 +757,22 @@ mqttClient.on("message", async (topic, payload) => {
       return;
     }
     lastSeenDevice = Date.now();
+    // TOPIC_STATUS (sendOnlineStatus, fired on device MQTT reconnect) only carries
+    // {food_level, jammed, online, fw_version} — not bowl_weight/last_dispensed_g/
+    // dispense_success. Falling back to the last known values (instead of null)
+    // means a routine WiFi reconnect doesn't wipe out otherwise-still-valid
+    // telemetry from the dashboard.
     const entry = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       food_level: data.food_level ?? 0,
       jammed: !!data.jammed,
-      last_dispensed_g: data.last_dispensed_g ?? null,
-      dispense_success: data.dispense_success ?? null,
-      bowl_weight: data.bowl_weight ?? null,
+      last_dispensed_g: data.last_dispensed_g ?? lastSensorEntry?.last_dispensed_g ?? null,
+      dispense_success: data.dispense_success ?? lastSensorEntry?.dispense_success ?? null,
+      bowl_weight: data.bowl_weight ?? lastSensorEntry?.bowl_weight ?? null,
       ...(data.fw_version ? { fw_version: data.fw_version } : {}),
     };
-    
+
     try {
       // Always update 'latest' document
       await firestoreDb.collection("sensor_logs").doc("latest").set(entry);
@@ -782,6 +848,16 @@ setInterval(async () => {
     const isDeviceOnline = lastSeenDevice > 0 && (Date.now() - lastSeenDevice < 25000);
     if (!isDeviceOnline) {
       console.log(`[Schedule] "${s.label}" skipped at ${hhmm} — device is offline.`);
+      continue;
+    }
+
+    // lastSeenDevice can be "fresh" even when the server's own link to the broker
+    // is down (it only reflects when a device message last arrived) — without this,
+    // mqtt.js queues the publish and only fires its callback on reconnect, minutes
+    // later, recording a feeding timestamped for when it should have fired rather
+    // than when (or whether) food was actually dispensed.
+    if (!mqttClient.connected) {
+      console.log(`[Schedule] "${s.label}" skipped at ${hhmm} — MQTT broker not connected.`);
       continue;
     }
 
