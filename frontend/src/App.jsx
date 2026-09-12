@@ -74,7 +74,7 @@ const BowlSVG = ({ weight }) => {
   );
 };
 
-const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
+const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules, cardRef }) => {
   const getTimelinePosition = (timeStr) => {
     if (!timeStr) return 0;
     const [h, m] = timeStr.split(':').map(Number);
@@ -170,7 +170,7 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
   }
 
   return (
-    <div className="tactile-card" style={{ flex: 'none', display: 'flex', flexDirection: 'column' }}>
+    <div ref={cardRef} className="tactile-card" style={{ flex: 'none', display: 'flex', flexDirection: 'column' }}>
       <div className="card-header">
         <Clock size={18} />
         <span className="label-caps">FEEDING SCHEDULE</span>
@@ -404,6 +404,43 @@ export default function App() {
   const [manualPortion, setManualPortion] = useState(45);
   const [otaUpdating, setOtaUpdating] = useState(false);
   const [otaStatus, setOtaStatus] = useState(null); // null | {status, version?, error?}
+
+  // Align the System Notifications card's bottom edge with the Feeding Schedule
+  // card's bottom edge (main-column vs. right-column are independent flex stacks
+  // with no structural relationship, so this can only be done by measuring —
+  // a fixed pixel value would only match today's specific content).
+  const feedingScheduleCardRef = useRef(null);
+  const notificationsCardRef = useRef(null);
+  const [notifTargetHeight, setNotifTargetHeight] = useState(null); // null = fall back to CSS maxHeight:300px
+
+  useEffect(() => {
+    const DESKTOP_BREAKPOINT = 992; // matches the .dashboard-layout single-column CSS breakpoint
+    const computeAlignedHeight = () => {
+      if (window.innerWidth <= DESKTOP_BREAKPOINT) {
+        setNotifTargetHeight(null); // columns stack vertically below this width — alignment doesn't apply
+        return;
+      }
+      const scheduleEl = feedingScheduleCardRef.current;
+      const notifEl = notificationsCardRef.current;
+      if (!scheduleEl || !notifEl) return;
+      const height = scheduleEl.getBoundingClientRect().bottom - notifEl.getBoundingClientRect().top;
+      if (height > 100) setNotifTargetHeight(height); // sanity floor against a mid-layout measurement
+    };
+
+    computeAlignedHeight();
+    window.addEventListener('resize', computeAlignedHeight);
+
+    // Catches size changes from schedule/notification count changes, the timeline's
+    // own row-stacking, font loading, etc. — anything a plain effect dependency list
+    // would miss.
+    const ro = new ResizeObserver(computeAlignedHeight);
+    if (feedingScheduleCardRef.current) ro.observe(feedingScheduleCardRef.current);
+
+    return () => {
+      window.removeEventListener('resize', computeAlignedHeight);
+      ro.disconnect();
+    };
+  }, [schedules, alerts]);
   const [deviceFwVersion, setDeviceFwVersion] = useState(null); // version the ESP32 is currently running
   const [latestFwVersion, setLatestFwVersion] = useState(null); // version available in version.json
   const deviceTimeoutRef = useRef(null);
@@ -1375,6 +1412,7 @@ export default function App() {
             schedules={schedules}
             recentFeedings={recentFeedings}
             onManageSchedules={handleAddScheduleClick}
+            cardRef={feedingScheduleCardRef}
           />
 
           <div className="tactile-card" style={{ height: '300px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -1447,7 +1485,15 @@ export default function App() {
             </div>
           </div>
 
-          <div className="tactile-card" style={{ maxHeight: '300px', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+          <div
+            ref={notificationsCardRef}
+            className="tactile-card"
+            style={
+              notifTargetHeight
+                ? { height: `${notifTargetHeight}px`, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }
+                : { maxHeight: '300px', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }
+            }
+          >
             <div className="card-header" style={{ justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Bell size={18} />
