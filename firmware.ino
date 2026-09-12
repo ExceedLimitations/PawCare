@@ -101,7 +101,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.19"
+#define FIRMWARE_VERSION  "1.3.20"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA) — expires 2035-06-04
@@ -392,6 +392,14 @@ void sendOnlineStatus() {
 #define PULSE_MIN_MS 100        // increased to 100 as requested
 #define PULSE_MAX_MS 300        // lowered from 600 to ensure the first bulk drop isn't too huge
 #define PULSE_SETTLE_MS 700
+// Once within DISPENSE_FINE_APPROACH_G of target, use a shorter settle wait so the
+// final stretch finishes faster in wall-clock time. Tradeoff: PULSE_SETTLE_MS is
+// there so the load cell reads a mechanically-stable number before the next pulse
+// is sized — cutting it risks reading mid-vibration and mis-sizing (or mis-timing
+// the stall counter for) the next pulse. Requested/accepted with that tradeoff;
+// if the tail becomes less accurate, raise PULSE_SETTLE_FAST_MS back up.
+#define DISPENSE_FINE_APPROACH_G 5.0
+#define PULSE_SETTLE_FAST_MS 350
 #define DISPENSE_DONE_G 0.5
 
 enum DispenseState { DISPENSE_IDLE, DISPENSE_INIT, DISPENSE_SETTLE, DISPENSE_PULSE_OPEN, DISPENSE_PULSE_SETTLE, DISPENSE_FINAL_SETTLE, DISPENSE_EVALUATE };
@@ -480,8 +488,9 @@ void handleDispenser() {
             }
             break;
 
-        case DISPENSE_PULSE_SETTLE:
-            if (millis() - dispTrickleTimer > PULSE_SETTLE_MS) {
+        case DISPENSE_PULSE_SETTLE: {
+            unsigned long settleMs = (remaining <= DISPENSE_FINE_APPROACH_G) ? PULSE_SETTLE_FAST_MS : PULSE_SETTLE_MS;
+            if (millis() - dispTrickleTimer > settleMs) {
                 if (remaining <= DISPENSE_DONE_G) {
                     Serial.printf("[Dispense] Target reached — dispensed %.1fg\n", dispensed);
                     dispState = DISPENSE_FINAL_SETTLE;
@@ -516,6 +525,7 @@ void handleDispenser() {
                 }
             }
             break;
+        }
 
         case DISPENSE_FINAL_SETTLE:
             if (millis() - dispTrickleTimer > 1500) {
