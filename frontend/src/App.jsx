@@ -1447,7 +1447,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="tactile-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+          <div className="tactile-card" style={{ height: '300px', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             <div className="card-header" style={{ justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Bell size={18} />
