@@ -101,7 +101,7 @@ void handleBuzzer() {
 // Bump FIRMWARE_VERSION whenever you build a new binary to deploy.
 // Host version.json and firmware.bin at OTA_VERSION_URL / OTA_BIN_URL.
 // Example version.json: {"version":"1.0.1","url":"https://yoursite.com/firmware/firmware.bin"}
-#define FIRMWARE_VERSION  "1.3.18"
+#define FIRMWARE_VERSION  "1.3.19"
 #define OTA_VERSION_URL   "https://pawcare-rcd9.onrender.com/firmware/version.json"
 
 // ISRG Root X1 (Let's Encrypt Root CA) — expires 2035-06-04
@@ -409,8 +409,16 @@ unsigned long lastDispenseTelemetry = 0;
 unsigned long currentPulseDuration = 0;
 float         dispNoProgressBaseline = 0;  // dispensed-so-far at the last pulse that made real progress
 int           dispNoProgressCount    = 0;  // consecutive pulses since then with negligible weight gain
-#define DISPENSE_STALL_PULSES 4    // consecutive no-progress pulses before giving up as "hopper empty"
-#define DISPENSE_STALL_GAIN_G 1.0  // grams of progress needed to reset the stall counter
+// Every pulse below ~12.5g remaining is floor-clamped to PULSE_MIN_MS (constrain()
+// in the pulse-duration formula below), so the final approach to target is inherently
+// slow-but-real trickle, not a sign of an empty hopper. Confirmed in the field: with
+// the old 4-pulse/1.0g bar, a 45g request was reported "HOPPER EMPTY" after only
+// ~3s, having actually dispensed 35-37g — the auger was still working, just slowly.
+// These are deliberately generous so real (if slow) progress never trips this, while
+// still detecting a truly empty hopper in ~8s worst case — far faster than the old
+// 35s hard timeout this feature replaced.
+#define DISPENSE_STALL_PULSES 10   // consecutive no-progress pulses before giving up as "hopper empty"
+#define DISPENSE_STALL_GAIN_G 0.2  // grams of progress needed to reset the stall counter
 
 void handleDispenser() {
     if (dispState == DISPENSE_IDLE) return;
@@ -1051,7 +1059,9 @@ void loop() {
   // causing a momentary 0% spike.
   static int  zeroConfirmCount   = 0;  // consecutive timeouts leaning toward empty
   static int  fullConfirmCount   = 0;  // consecutive timeouts leaning toward full
+  static int  jumpConfirmCount   = 0;  // consecutive big-jump *valid* readings pending confirmation
   static const int CONFIRM_NEEDED = 5; // raised from 3 — needs 5 consecutive timeouts before committing
+  static const int JUMP_THRESHOLD_PCT = 15; // level swing (%) large enough to require confirmation
 
   // Rate-limit ultrasonic reads to every 500 ms — getDistance() blocks ~30 ms
   // (3 pings × 10 ms each) which is too long to run every loop iteration.
@@ -1084,13 +1094,32 @@ void loop() {
         }
         // Not yet confirmed — keep displaying the last good level
       }
+      jumpConfirmCount = 0; // a timeout is a different signal — don't let it count toward a jump
       sensorFailCount = 0;
       sensorAlerted   = false;
     } else if (dist > 0 && dist < 200) {
-      // Good reading — map distance to percentage and update immediately
-      lastValidDist    = dist;
       // map(): short distance (food near top) = high %, long distance (food low) = low %
-      lastValidLevel   = constrain(map(dist, HOPPER_FULL_CM, HOPPER_EMPTY_CM, 100, 0), 0, 100);
+      int candidateLevel = constrain(map(dist, HOPPER_FULL_CM, HOPPER_EMPTY_CM, 100, 0), 0, 100);
+      // A single reading that swings far from the currently displayed level is more
+      // likely near-field ringing/acoustic multipath — common when the target sits at
+      // or inside the sensor's ~2cm blind zone, e.g. a fully-covered/full reservoir —
+      // than a real instant level change (food doesn't move that fast). Require the
+      // same kind of confirmation timeouts already get before trusting a big jump;
+      // small/gradual drift (normal depletion) still applies immediately.
+      if (abs(candidateLevel - lastValidLevel) > JUMP_THRESHOLD_PCT) {
+        jumpConfirmCount++;
+        if (jumpConfirmCount >= CONFIRM_NEEDED) {
+          lastValidLevel   = candidateLevel;
+          jumpConfirmCount = 0;
+        }
+        // Not yet confirmed — hold the displayed level.
+      } else {
+        lastValidLevel   = candidateLevel;
+        jumpConfirmCount = 0;
+      }
+      // Track the raw distance regardless of whether the level jump was confirmed,
+      // so the timeout branch's full/empty lean above never goes stale.
+      lastValidDist    = dist;
       zeroConfirmCount = 0;
       fullConfirmCount = 0;
       sensorFailCount  = 0;
