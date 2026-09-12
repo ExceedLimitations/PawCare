@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 
 const IS_DEV = import.meta.env.DEV;
 
-export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, onOtaStatus, onConnect, token }) {
+export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, onOtaStatus, onNotification, onConnect, token }) {
   const socketRef = useRef(null);
   const [connected, setConnected] = useState(false);
 
@@ -14,6 +14,7 @@ export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, o
   const onAlertRef         = useRef(onAlert);
   const onFeedingsTodayRef = useRef(onFeedingsToday);
   const onOtaStatusRef     = useRef(onOtaStatus);
+  const onNotificationRef  = useRef(onNotification);
   const onConnectRef       = useRef(onConnect);
 
   // Keep refs in sync with latest props every render
@@ -22,6 +23,7 @@ export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, o
   onAlertRef.current         = onAlert;
   onFeedingsTodayRef.current = onFeedingsToday;
   onOtaStatusRef.current     = onOtaStatus;
+  onNotificationRef.current  = onNotification;
   onConnectRef.current       = onConnect;
 
   useEffect(() => {
@@ -47,6 +49,7 @@ export function useSocket({ onStatus, onFeedingDone, onAlert, onFeedingsToday, o
     socket.on('alert',         (d) => onAlertRef.current?.(d));
     socket.on('feedings_today',(d) => onFeedingsTodayRef.current?.(d));
     socket.on('ota_status',    (d) => onOtaStatusRef.current?.(d));
+    socket.on('notification',  (d) => onNotificationRef.current?.(d));
 
     return () => socket.disconnect();
   }, [token]); // Only reconnect when token changes

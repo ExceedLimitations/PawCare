@@ -232,6 +232,12 @@ app.post("/feed", authenticate, feedLimiter, async (req, res) => {
         await firestoreDb.collection("feedings").doc(record.id).set(record);
         io.emit("feeding_done", record);
         console.log(`[Feed] ${portion}g (${type}) — logged to Firestore`);
+        const foodLevel = lastSensorEntry?.food_level;
+        createNotification({
+          type: "success",
+          title: "Food Dispensed",
+          message: `${feedTypeLabel(record)} — ${record.portion_g}g dispensed.` + (foodLevel != null ? ` Food level is at ${foodLevel}%.` : ""),
+        }).catch(() => {});
       } catch (dbErr) {
         console.error("[Firebase] Error saving feed:", dbErr.message);
       }
@@ -639,6 +645,12 @@ io.on("connection", async (socket) => {
           await firestoreDb.collection("feedings").doc(record.id).set(record);
           io.emit("feeding_done", record);
           console.log(`[Feed] ${portion}g (${type})`);
+          const foodLevel = lastSensorEntry?.food_level;
+          createNotification({
+            type: "success",
+            title: "Food Dispensed",
+            message: `${feedTypeLabel(record)} — ${record.portion_g}g dispensed.` + (foodLevel != null ? ` Food level is at ${foodLevel}%.` : ""),
+          }).catch(() => {});
         } catch (dbErr) {
           console.error("[Firebase] Error saving socket feed:", dbErr.message);
         }
@@ -671,6 +683,41 @@ io.on("connection", async (socket) => {
   });
 });
 
+/**
+ * Create and persist a notification server-side, then broadcast it live to
+ * connected clients. Notifications used to only ever be created by a connected
+ * browser tab reacting to a live event — meaning nothing was recorded at all
+ * if no dashboard was open when a schedule fired or a fault occurred. Calling
+ * this at the moment the triggering event actually happens (dispense recorded,
+ * device alert received) means it's captured either way; a client picks it up
+ * live via the 'notification' socket event, or on next connect via GET /notifications.
+ */
+async function createNotification({ type, title, message }) {
+  const now = new Date();
+  const record = {
+    id: crypto.randomUUID(),
+    type,
+    title,
+    message,
+    time: now.toLocaleTimeString([], { timeZone: LOCAL_TZ, hour12: false }),
+    date: now.toLocaleDateString([], { timeZone: LOCAL_TZ, month: "numeric", day: "numeric", year: "numeric" }),
+    timestamp: now.toISOString(),
+  };
+  try {
+    await firestoreDb.collection("notifications").doc(record.id).set(record);
+    io.emit("notification", record);
+  } catch (err) {
+    console.error("[Notifications] Error saving server-generated notification:", err.message);
+  }
+  return record;
+}
+
+function feedTypeLabel(record) {
+  return record.type === "scheduled"
+    ? (record.label ? `Scheduled (${record.label})` : "Scheduled")
+    : record.type === "physical" ? "Physical Button" : "Manual";
+}
+
 /* ─────────────────────────── MQTT ───────────────────────────── */
 const mqttClient = mqtt.connect(MQTT_BROKER, {
   reconnectPeriod: 5000,
@@ -692,6 +739,16 @@ mqttClient.on("error", (err) => {
 let lastSensorEntry = null;
 let lastSensorArchiveTime = 0;
 let lastSeenDevice = 0;
+// Reservoir-level band the last notification was fired for — null until the
+// first sensor reading arrives, so that reading never fires a false "changed" alert.
+let prevFoodState = null; // 'full' | 'sufficient' | 'low' | 'empty' | null
+
+function getReservoirState(level) {
+  if (level >= 75) return "full";
+  if (level >= 40) return "sufficient";
+  if (level > 0) return "low";
+  return "empty";
+}
 
 // Heartbeat: every 10 s, broadcast device online/offline state to all dashboard clients.
 // This ensures clients that just connected (or reconnected) get the current state
@@ -722,7 +779,13 @@ mqttClient.on("message", async (topic, payload) => {
 
   if (topic === TOPIC_ALERTS) {
     console.log(`[MQTT] Alert from device: ${data.alert_message}`);
-    io.emit("alert", { level: "error", message: data.alert_message || "Device alert" });
+    const message = data.alert_message || "Device alert";
+    io.emit("alert", { level: "error", message });
+    const title = message.startsWith("CRITICAL FAULT") ? "Fault Detected"
+      : message.startsWith("HOPPER EMPTY") || message.startsWith("ABORT") ? "Hopper Empty"
+      : message.startsWith("SENSOR FAULT") ? "Sensor Fault"
+      : "System Notice";
+    createNotification({ type: "error", title, message }).catch(() => {});
     return;
   }
 
@@ -744,6 +807,12 @@ mqttClient.on("message", async (topic, payload) => {
       await firestoreDb.collection("feedings").doc(record.id).set(record);
       io.emit("feeding_done", record);
       console.log(`[Feed] ${record.portion_g}g (physical button)`);
+      const foodLevel = lastSensorEntry?.food_level;
+      createNotification({
+        type: "success",
+        title: "Food Dispensed",
+        message: `${feedTypeLabel(record)} — ${record.portion_g}g dispensed.` + (foodLevel != null ? ` Food level is at ${foodLevel}%.` : ""),
+      }).catch(() => {});
     } catch (err) {
       console.error("[Firebase] Error saving physical feed:", err.message);
     }
@@ -794,6 +863,20 @@ mqttClient.on("message", async (topic, payload) => {
     }
 
     io.emit("status", entry);
+
+    // Fire a notification only when the reservoir crosses into a new band —
+    // not on every reading — mirroring the banding the dashboard already uses.
+    const currentFoodState = getReservoirState(entry.food_level);
+    if (prevFoodState !== null && currentFoodState !== prevFoodState) {
+      const RESERVOIR_NOTIFS = {
+        full:       { type: "success", title: "Reservoir Full",       message: `Food reservoir is FULL at ${entry.food_level}%. You're all set!` },
+        sufficient: { type: "info",    title: "Reservoir Sufficient", message: `Food reservoir is SUFFICIENT at ${entry.food_level}%. Plenty of food remaining.` },
+        low:        { type: "warning", title: "Reservoir Low",        message: `Food reservoir is LOW at ${entry.food_level}%. Please refill soon.` },
+        empty:      { type: "error",   title: "Reservoir Empty",      message: `Food reservoir is EMPTY at ${entry.food_level}%. Refill immediately!` },
+      };
+      createNotification(RESERVOIR_NOTIFS[currentFoodState]).catch(() => {});
+    }
+    prevFoodState = currentFoodState;
   }
 });
 
@@ -892,6 +975,12 @@ setInterval(async () => {
           await firestoreDb.collection("feedings").doc(record.id).set(record);
           io.emit("feeding_done", record);
           console.log(`[Schedule] "${s.label}" fired at ${hhmm} (${LOCAL_TZ}) — ${s.portion_g}g`);
+          const foodLevel = lastSensorEntry?.food_level;
+          createNotification({
+            type: "success",
+            title: "Food Dispensed",
+            message: `${feedTypeLabel(record)} — ${record.portion_g}g dispensed.` + (foodLevel != null ? ` Food level is at ${foodLevel}%.` : ""),
+          }).catch(() => {});
         } catch (dbErr) {
           console.error("[Firebase] Error saving scheduled feed:", dbErr.message);
         }

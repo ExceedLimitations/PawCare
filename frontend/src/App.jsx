@@ -445,13 +445,6 @@ export default function App() {
   const [latestFwVersion, setLatestFwVersion] = useState(null); // version available in version.json
   const deviceTimeoutRef = useRef(null);
   const dispenseTimeoutRef = useRef(null);
-  const statusRef = useRef({ food_level: 0, jammed: false, last_dispensed_g: 0, bowl_weight: 0, dispense_success: null });
-  // Tracks feeding IDs we have already notified about so the catch-up
-  // fetch on reconnect never fires a duplicate notification.
-  const seenFeedingIds = useRef(new Set());
-  // Becomes true once the initial /feedings/recent fetch has seeded seenFeedingIds.
-  // The onConnect catch-up is skipped until then to avoid racing with the first load.
-  const initSeeded = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -493,6 +486,34 @@ export default function App() {
       .catch(err => console.warn('[Notifications] Failed to clear:', err));
   }, [authFetch]);
 
+  // Re-fetch the server's notification list and merge in anything not already
+  // present (by id). Notifications are now created server-side the instant the
+  // triggering event happens (a scheduled/physical dispense, a device fault),
+  // so this — run on every socket reconnect — is what surfaces whatever fired
+  // while this dashboard was closed or disconnected, with no time-window limit.
+  const refetchNotifications = useCallback(async () => {
+    try {
+      const res = await authFetch('/notifications');
+      if (!res.ok) return;
+      const rows = await res.json();
+      if (!Array.isArray(rows)) return;
+      setAlerts(prev => {
+        const knownIds = new Set(prev.map(a => a.id));
+        const fresh = rows.filter(r => !knownIds.has(r.id));
+        return fresh.length ? [...fresh, ...prev].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) : prev;
+      });
+    } catch (err) {
+      console.warn('[PawCare] Notification catch-up failed:', err);
+    }
+  }, [authFetch]);
+
+  // A notification created server-side (dispense, device fault) arrives here live.
+  // Persistence already happened server-side, so just show it — no POST needed.
+  const onServerNotification = useCallback((record) => {
+    setAlerts(prev => prev.some(a => a.id === record.id) ? prev : [record, ...prev]);
+    notifyRef.current?.(record.title, record.message, { tag: `pawcare-${record.type}-${record.id}` });
+  }, []);
+
   const handleStatusUpdate = useCallback((newStatus, isLive = true) => {
     if (newStatus.online === false) {
       setDeviceConnected(false);
@@ -509,11 +530,7 @@ export default function App() {
     // Capture device's running firmware version from telemetry
     if (newStatus.fw_version) setDeviceFwVersion(newStatus.fw_version);
 
-    setStatus(prev => {
-      const next = { ...prev, ...newStatus };
-      statusRef.current = next;
-      return next;
-    });
+    setStatus(prev => ({ ...prev, ...newStatus }));
 
     if (isLive) {
       setDeviceConnected(true);
@@ -570,14 +587,10 @@ export default function App() {
         : d.type === 'physical' ? 'Physical Button' : 'Manual';
       addLog('ok', `${typeLabel} dispense — ${d.portion_g}g dispensed at ${t}`);
       setRecentFeedings(p => [d, ...p].slice(0, 50));
-      // Mark this feeding as seen so the reconnect catch-up doesn't re-notify.
-      if (d.id) seenFeedingIds.current.add(d.id);
-
-      // Add in-app notification — native OS notify fires automatically inside addAlert
-      const foodLevel = statusRef.current.food_level ?? 0;
-      const notifTitle = 'Food Dispensed';
-      const notifBody = `${typeLabel} — ${d.portion_g}g dispensed. Food level is at ${foodLevel}%.`;
-      addAlert('success', notifTitle, notifBody);
+      // The "Food Dispensed" notification itself is now created server-side (at the
+      // same moment the feeding record is written) and arrives via the 'notification'
+      // socket event below — this handler no longer needs to create one, which also
+      // means it now correctly fires even when no dashboard was open to see it live.
 
       // Live-update the chart if it is currently showing the Week or Month period.
       // We update chartFeedings directly so the chart stays in sync with live feeds
@@ -606,93 +619,17 @@ export default function App() {
       });
     },
     onAlert: d => {
+      // Just log — the matching notification is created server-side (alongside
+      // this same MQTT alert) and arrives via onNotification, live or on reconnect.
       addLog(d.level === 'error' ? 'err' : 'warn', d.message);
-      addAlert(d.level === 'error' ? 'error' : 'warning', d.level === 'error' ? 'Fault Detected' : 'System Notice', d.message);
     },
     onOtaStatus: handleOtaStatus,
-    // On every socket (re)connect, fetch the last 50 feedings and fire a
-    // notification for any scheduled/physical/manual feed that happened in
-    // the last 5 minutes but whose feeding_done event we never received
-    // (e.g. because the socket was briefly down when the server emitted it).
-    onConnect: async () => {
-      // Skip the catch-up until the initial page-load fetch has seeded seenFeedingIds.
-      // Without this guard, the very first socket connect (which races with init())
-      // would run with an empty set and generate duplicate notifications for all
-      // feedings in the last 5 minutes that are also in the initial load.
-      if (!initSeeded.current) return;
-      try {
-        const res = await authFetch('/feedings/recent');
-        if (!res.ok) return;
-        const rows = await res.json();
-        const cutoff = Date.now() - 5 * 60 * 1000; // 5-minute window
-        for (const f of rows) {
-          if (seenFeedingIds.current.has(f.id)) continue;
-          const feedTs = new Date(f.timestamp).getTime();
-          if (feedTs < cutoff) continue; // older than 5 min — skip
-          seenFeedingIds.current.add(f.id);
-          const typeLabel = f.type === 'scheduled'
-            ? (f.label ? `Scheduled (${f.label})` : 'Scheduled')
-            : f.type === 'physical' ? 'Physical Button' : 'Manual';
-          const t = new Date(f.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
-          addAlert('success', 'Food Dispensed', `${typeLabel} — ${f.portion_g}g dispensed at ${t}.`);
-        }
-      } catch (err) {
-        console.warn('[PawCare] Reconnect catch-up failed:', err);
-      }
-    },
+    onNotification: onServerNotification,
+    // Catch up on anything created server-side while this dashboard was closed
+    // or disconnected — a scheduled/physical dispense, a device fault, etc.
+    onConnect: refetchNotifications,
     token,
   });
-
-  const prevJammed = useRef(false);
-  useEffect(() => {
-    if (status.jammed && !prevJammed.current) {
-      addAlert('error', 'Feeder Jammed', 'IR beam blocked or motor stall detected. Inspect hopper immediately.');
-      addLog('err', 'Feeder Jammed — IR beam blocked');
-    }
-    prevJammed.current = status.jammed;
-  }, [status.jammed, addAlert, addLog]);
-
-  // Returns one of 'full' | 'sufficient' | 'low' | 'empty' based on current level
-  const getReservoirState = (level) => {
-    if (level >= 75) return 'full';
-    if (level >= 40) return 'sufficient';
-    if (level > 0)   return 'low';
-    return 'empty';
-  };
-
-  // statusReady gates the reservoir effect — stays false until the first
-  // real /status fetch completes so the default food_level:0 initial state
-  // never triggers a spurious notification on mount.
-  const statusReady = useRef(false);
-  const prevFoodState = useRef(null);
-  useEffect(() => {
-    if (!statusReady.current || status.food_level == null) return;
-    const currentState = getReservoirState(status.food_level);
-    if (currentState === prevFoodState.current) return; // no change — skip
-
-    switch (currentState) {
-      case 'full':
-        addAlert('success', 'Reservoir Full', `Food reservoir is FULL at ${status.food_level}%. You're all set!`);
-        addLog('info', `Reservoir state → FULL (${status.food_level}%)`);
-        break;
-      case 'sufficient':
-        addAlert('info', 'Reservoir Sufficient', `Food reservoir is SUFFICIENT at ${status.food_level}%. Plenty of food remaining.`);
-        addLog('info', `Reservoir state → SUFFICIENT (${status.food_level}%)`);
-        break;
-      case 'low':
-        addAlert('warning', 'Reservoir Low', `Food reservoir is LOW at ${status.food_level}%. Please refill soon.`);
-        addLog('warn', `Reservoir state → LOW (${status.food_level}%)`);
-        break;
-      case 'empty':
-        addAlert('error', 'Reservoir Empty', `Food reservoir is EMPTY at ${status.food_level}%. Refill immediately!`);
-        addLog('err', `Reservoir state → EMPTY (${status.food_level}%)`);
-        break;
-      default:
-        break;
-    }
-
-    prevFoodState.current = currentState;
-  }, [status.food_level, addAlert, addLog]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -710,26 +647,12 @@ export default function App() {
           authFetch('/notifications').then(r => r.json()),
         ]);
         if (s.status === 'fulfilled' && s.value && !s.value.error) {
-          // Seed prevFoodState and mark statusReady BEFORE calling handleStatusUpdate.
-          // handleStatusUpdate calls setStatus which schedules a re-render — by the time
-          // the reservoir useEffect fires for that render, the refs are already set so
-          // no spurious notification is generated.
-          if (s.value.food_level != null) {
-            const lvl = s.value.food_level;
-            prevFoodState.current =
-              lvl >= 75 ? 'full' : lvl >= 40 ? 'sufficient' : lvl > 0 ? 'low' : 'empty';
-          }
-          statusReady.current = true;
           handleStatusUpdate(s.value, false);
         }
         if (today.status === 'fulfilled' && today.value && !today.value.error) setFeedingsToday(today.value.count || 0);
         if (sched.status === 'fulfilled' && Array.isArray(sched.value)) setSchedules(sched.value);
         if (recent.status === 'fulfilled' && Array.isArray(recent.value)) {
           setRecentFeedings(recent.value);
-          // Pre-seed seenFeedingIds so the reconnect catch-up never re-notifies
-          // feedings that were already loaded when the page first opened.
-          recent.value.forEach(f => { if (f.id) seenFeedingIds.current.add(f.id); });
-          initSeeded.current = true;
           if (recent.value.length > 0) {
             const last = recent.value[0];
             const t = new Date(last.timestamp).toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true });
