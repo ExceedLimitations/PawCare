@@ -293,8 +293,13 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   transform: translateX(-50%) rotate(45deg);
   width: 8px; height: 8px; background: var(--accent-primary);
 }
-.timeline-marker-wrapper { position: absolute; top: 0; height: 0; }
-.timeline-marker-wrapper:hover .timeline-marker-label { opacity: 1; transform: translateX(-50%) translateY(-3px); }
+.timeline-marker-wrapper { position: absolute; top: 0; height: 0; cursor: pointer; }
+/* Hover reveals the label for mouse users; .label-active is toggled by a tap/click
+   in FeedingTimeline so touch devices (which have no :hover) can reach it too. */
+.timeline-marker-wrapper:hover .timeline-marker-label,
+.timeline-marker-wrapper.label-active .timeline-marker-label {
+  opacity: 1; transform: translateX(-50%) translateY(-3px);
+}
 
 /* ── Schedule Actions ── */
 .schedule-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 16px; border-top: 1px solid var(--border); }
@@ -309,7 +314,15 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   transition: background 0.15s, box-shadow 0.15s;
 }
 .management-item:hover { background: var(--bg-subtle); box-shadow: var(--shadow-xs); }
-.management-info { font-size: 0.84rem; color: var(--text-main); }
+.management-info {
+  font-size: 0.84rem; color: var(--text-main);
+  /* Truncate instead of wrapping to a 2nd line — a wrapped label leaves the
+     toggle/remove controls (vertically centered against the whole row) floating
+     oddly high next to a taller two-line label. min-width:0 is required for a
+     flex child to shrink below its content size so text-overflow can kick in. */
+  flex: 1; min-width: 0; display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .management-info strong { font-weight: 700; }
 
 .management-delete { background: transparent; border: none; color: var(--status-error); font-size: 0.78rem; font-weight: 600; cursor: pointer; padding: 5px 10px; border-radius: 6px; transition: background 0.15s; }
@@ -431,4 +444,10 @@ input:checked + .toggle-track::before { transform: translateX(19px); }
   .visualizer-row { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: 1fr; }
   .history-row-compact { grid-template-columns: minmax(140px, max-content) auto 1fr 20px; font-size: 0.78rem; }
+
+  /* Drop the least-essential nav-info text so "Log Out" doesn't wrap onto its
+     own orphaned line once firmware-version text is present (confirmed at
+     iPhone width with real data: online badge + clock + FW + bell + logout
+     already fills the row without these two). */
+  .nav-collapsible { display: none !important; }
 }

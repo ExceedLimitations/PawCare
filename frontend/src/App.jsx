@@ -81,6 +81,40 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
     return ((h * 60 + m) / 1440) * 100;
   };
 
+  // Tap-to-reveal: the marker label is CSS-hover-only otherwise, which touch
+  // devices can't trigger. Tapping a marker toggles its own label; tapping a
+  // different marker switches to that one.
+  const [activeMarkerId, setActiveMarkerId] = useState(null);
+
+  // Markers within CLUSTER_THRESHOLD_MIN of each other visually overlap at
+  // narrow (mobile) widths since they share the same 24h-wide axis — greedily
+  // assign each a "row" so close-together schedules stack instead of merging
+  // into an unreadable blob. (Doesn't account for wraparound across midnight —
+  // a rare case not worth the extra complexity here.)
+  const CLUSTER_THRESHOLD_MIN = 45;
+  const markerRowById = useMemo(() => {
+    const withMinutes = schedules
+      .map(s => {
+        const [h, m] = s.time.split(':').map(Number);
+        return { id: s.id, minutes: h * 60 + m };
+      })
+      .sort((a, b) => a.minutes - b.minutes);
+
+    const rowLastMinutes = [];
+    const rows = {};
+    for (const s of withMinutes) {
+      let row = 0;
+      while (rowLastMinutes[row] !== undefined && (s.minutes - rowLastMinutes[row]) < CLUSTER_THRESHOLD_MIN) {
+        row++;
+      }
+      rowLastMinutes[row] = s.minutes;
+      rows[s.id] = row;
+    }
+    return rows;
+  }, [schedules]);
+  const maxMarkerRow = Math.max(0, ...Object.values(markerRowById));
+  const ROW_HEIGHT_PX = 22;
+
   const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString([], { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).replace(/^24:/, '00:'));
   useEffect(() => {
     const timer = setInterval(() => {
@@ -142,7 +176,7 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
         <span className="label-caps">FEEDING SCHEDULE</span>
       </div>
 
-      <div className="timeline-axis-wrapper">
+      <div className="timeline-axis-wrapper" style={{ paddingBottom: `${34 + maxMarkerRow * ROW_HEIGHT_PX}px` }}>
         <div className="timeline-line">
           {[0, 4, 8, 12, 16, 20, 24].map(h => {
             const pct = (h / 24) * 100;
@@ -188,12 +222,15 @@ const FeedingTimeline = ({ schedules, recentFeedings, onManageSchedules }) => {
             }
 
             const isNext = s.id === nextUpcomingId;
+            const row = markerRowById[s.id] || 0;
+            const isLabelActive = activeMarkerId === s.id;
 
             return (
               <div
                 key={s.id}
-                className="timeline-marker-wrapper"
-                style={{ left: `${pct}%` }}
+                className={`timeline-marker-wrapper ${isLabelActive ? 'label-active' : ''}`}
+                style={{ left: `${pct}%`, top: `${row * ROW_HEIGHT_PX}px` }}
+                onClick={() => setActiveMarkerId(prev => prev === s.id ? null : s.id)}
               >
                 <div className={`timeline-marker ${state} ${isNext ? 'next-pulse' : ''}`}>
                   {state === 'completed' && <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'var(--status-ok)' }} />}
@@ -1014,11 +1051,18 @@ export default function App() {
 
         {/* Right — Session Info */}
         <div className="nav-info">
-          <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>Welcome, Admin</span>
-          <span className="nav-divider">|</span>
+          {/* display:contents keeps these inert for layout — grouped only so a narrow-
+              phone media query can hide the text and its divider as one unit instead
+              of leaving an orphaned "|" behind. */}
+          <span className="nav-collapsible" style={{ display: 'contents' }}>
+            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>Welcome, Admin</span>
+            <span className="nav-divider">|</span>
+          </span>
           <ClockDisplay />
-          <span className="nav-divider">|</span>
-          <span className="font-mono">SYNC: {lastSyncTime}</span>
+          <span className="nav-collapsible" style={{ display: 'contents' }}>
+            <span className="nav-divider">|</span>
+            <span className="font-mono">SYNC: {lastSyncTime}</span>
+          </span>
           {(deviceFwVersion || latestFwVersion) && (
             <>
               <span className="nav-divider">|</span>
@@ -1356,10 +1400,10 @@ export default function App() {
               ) : (
                 schedules.map(s => (
                   <div key={s.id} className="management-item">
-                    <span className="management-info font-mono">
+                    <span className="management-info font-mono" title={`${s.label} | ${s.portion_g}g | ${s.time}`}>
                       <strong>{s.label}</strong> <span style={{ color: 'var(--border-dark)' }}>|</span> {s.portion_g}g <span style={{ color: 'var(--border-dark)' }}>|</span> {s.time}
                     </span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexShrink: 0 }}>
                       <label className="toggle">
                         <input
                           type="checkbox"
