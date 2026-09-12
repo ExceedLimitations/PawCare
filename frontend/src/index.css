@@ -404,13 +404,20 @@ input:checked + .toggle-track::before { transform: translateX(19px); }
 
 /* ── Responsive ── */
 @media (max-width: 1200px) {
-  .dashboard-layout { grid-template-columns: 270px 1fr; }
+  /* minmax(0, 1fr), not bare 1fr: .dashboard-layout has justify-content:center
+     (line ~120), which makes bare fr tracks size by their content's max-content
+     width instead of stretching to fill the container — a single long,
+     unwrapped-if-given-room text run anywhere in the column (e.g. a notification
+     message) then inflates this track past the viewport, overflowing the whole
+     page horizontally. minmax(0, ...) restores normal "shrink to fit, grow to
+     fill" behavior without changing anything when content already fits. */
+  .dashboard-layout { grid-template-columns: 270px minmax(0, 1fr); }
   .right-column { grid-column: 1/-1; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: auto; min-height: auto; }
   .right-column > .tactile-card { min-height: 300px; }
 }
 
 @media (max-width: 992px) {
-  .dashboard-layout { grid-template-columns: 1fr; padding: 20px; }
+  .dashboard-layout { grid-template-columns: minmax(0, 1fr); padding: 20px; }
   .right-column { display: flex; flex-direction: column; gap: 20px; height: auto; min-height: auto; }
   .left-column { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: auto; }
   .profile-card-enhanced, .btn-primary { grid-column: 1/-1; }
